@@ -1,0 +1,8 @@
+tests/test_attacks.py::test_tampered_org_id_notes_denied {"correlation_id": "9e09c61a-da90-4686-88d6-15c00ff6adfc", "user_id": "4b96cde9-d642-4ab7-a609-e701abc96814", "org_id": "eb7f05d7-3f9f-4761-888e-aa77eba43997", "action": "list_notes", "outcome": "deny"}
+PASSED
+tests/test_attacks.py::test_tampered_org_id_members_denied {"correlation_id": "fffeb73f-3c7a-48d1-9831-2f19e15e02bf", "user_id": "52762261-536a-42bf-aae7-43c833bbedf0", "org_id": "e181979e-56ea-43e5-a3ed-f0d7eaa247bf", "action": "list_members", "outcome": "deny"}
+PASSED
+tests/test_attacks.py::test_alice_cannot_post_note_to_bob_org {"correlation_id": "6bdd8b65-2e13-4197-8645-b2e07ce588b3", "user_id": "3367c03b-5176-43cd-8482-608f75a461e1", "org_id": "bbf0f8d2-e94d-4753-8545-ec2cfb71fc48", "action": "create_note", "outcome": "deny"}
+PASSED
+tests/test_attacks.py::test_no_token_denied PASSED
+tests/test_attacks.py::test_expired_token_denied PASSED
