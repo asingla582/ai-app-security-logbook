@@ -1,3 +1,19 @@
 .env
 .env.*
 docs/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+.next/
+out/
+
+# Supabase
+supabase/.branches/
+supabase/.temp/
