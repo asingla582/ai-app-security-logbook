@@ -1,8 +1,9 @@
-tests/test_attacks.py::test_tampered_org_id_notes_denied {"correlation_id": "9e09c61a-da90-4686-88d6-15c00ff6adfc", "user_id": "4b96cde9-d642-4ab7-a609-e701abc96814", "org_id": "eb7f05d7-3f9f-4761-888e-aa77eba43997", "action": "list_notes", "outcome": "deny"}
+tests/test_attacks.py::test_tampered_org_id_notes_denied {"correlation_id": "2708427b-4673-4609-befe-373870844b4f", "user_id": "16a1d13b-f94e-486f-8422-03e61d1253ea", "org_id": "479a8ebc-068b-4c4b-b282-5b3f9b931eab", "action": "list_notes", "outcome": "deny"}
 PASSED
-tests/test_attacks.py::test_tampered_org_id_members_denied {"correlation_id": "fffeb73f-3c7a-48d1-9831-2f19e15e02bf", "user_id": "52762261-536a-42bf-aae7-43c833bbedf0", "org_id": "e181979e-56ea-43e5-a3ed-f0d7eaa247bf", "action": "list_members", "outcome": "deny"}
+tests/test_attacks.py::test_tampered_org_id_members_denied {"correlation_id": "45f9f994-95b5-4591-ac77-1ef6cb64d99b", "user_id": "b972e393-194a-4480-b3af-c83016325213", "org_id": "46e0280d-e5a6-4be8-b1cc-151c03e59427", "action": "list_members", "outcome": "deny"}
 PASSED
-tests/test_attacks.py::test_alice_cannot_post_note_to_bob_org {"correlation_id": "6bdd8b65-2e13-4197-8645-b2e07ce588b3", "user_id": "3367c03b-5176-43cd-8482-608f75a461e1", "org_id": "bbf0f8d2-e94d-4753-8545-ec2cfb71fc48", "action": "create_note", "outcome": "deny"}
+tests/test_attacks.py::test_alice_cannot_post_note_to_bob_org {"correlation_id": "f250988c-35d6-40d2-8595-ce4d1e592ec9", "user_id": "ffe2fb8b-0f51-4398-8e0d-df679fca440a", "org_id": "90d05dab-daf4-4970-aa1f-d0ef5e5e3256", "action": "create_note", "outcome": "deny"}
 PASSED
 tests/test_attacks.py::test_no_token_denied PASSED
 tests/test_attacks.py::test_expired_token_denied PASSED
+tests/rls/test_isolation.py::test_alice_cannot_grant_herself_into_bob_org PASSED [100%]

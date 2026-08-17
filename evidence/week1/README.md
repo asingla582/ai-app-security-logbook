@@ -20,6 +20,15 @@ At the database layer, the same isolation is proven directly (`tests/rls/`): as
 Alice, `SELECT` and `INSERT` against Bob's rows return nothing / are rejected by
 Row Level Security, independent of the API.
 
+**Review finding (fixed):** while checking that the database-layer claim actually
+held, the original `membership_insert` policy was found to allow any authenticated
+user to insert a membership row — i.e. grant themselves into another org and then
+read its rows. The API never exposed this, but RLS is the primary wall, so the gap
+mattered. It was closed by tightening: membership inserts are now restricted to
+org owners, and org creation runs through a `SECURITY DEFINER` function so the
+first owner can be bootstrapped without loosening any read policy. A regression
+test (`test_alice_cannot_grant_herself_into_bob_org`) locks it in.
+
 ## What held
 
 Everything. Two independent walls stopped every attempt:
