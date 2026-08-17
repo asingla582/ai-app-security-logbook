@@ -36,6 +36,14 @@ as $$
   );
 $$;
 
+-- The authenticated role needs table-level privileges before RLS is even
+-- consulted; without these, Postgres denies every row to everyone, which would
+-- lock out legitimate users, not just attackers. RLS below does the actual
+-- tenant filtering — grants open the door, policies decide who walks through.
+grant select, insert, update, delete on organizations to authenticated;
+grant select, insert, update, delete on memberships to authenticated;
+grant select, insert, update, delete on notes to authenticated;
+
 alter table organizations enable row level security;
 alter table memberships enable row level security;
 alter table notes enable row level security;
