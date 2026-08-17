@@ -3,8 +3,12 @@ import uuid
 from fastapi import Depends, FastAPI, Request
 
 from .auth import User, get_current_user
+from .routes_notes import router as notes_router
+from .routes_orgs import router as orgs_router
 
 app = FastAPI(title="AI App Security Logbook API")
+app.include_router(orgs_router)
+app.include_router(notes_router)
 
 
 @app.middleware("http")
