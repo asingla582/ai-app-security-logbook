@@ -1,0 +1,24 @@
+# Supabase (Postgres, Auth) runs via the Supabase CLI on the host, not here.
+# These two services are the application; they talk to the host's Supabase stack.
+services:
+  api:
+    build: ./apps/api
+    ports:
+      - "8000:8000"
+    environment:
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET}
+      SUPABASE_DB_URL: ${SUPABASE_DB_URL}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  web:
+    build: ./apps/web
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_SUPABASE_URL: ${SUPABASE_URL}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
+    depends_on:
+      - api
