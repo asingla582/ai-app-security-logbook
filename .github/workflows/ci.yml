@@ -20,13 +20,20 @@ jobs:
         run: supabase start
       - name: Export Supabase env
         run: |
-          supabase status -o env | sed 's/^/SUPABASE_/' >> "$GITHUB_ENV" || true
-          {
-            echo "SUPABASE_URL=$(supabase status -o env | grep API_URL | cut -d= -f2- | tr -d '\"')"
-            echo "SUPABASE_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long"
-            echo "SUPABASE_SERVICE_ROLE_KEY=$(supabase status -o env | grep SERVICE_ROLE_KEY | cut -d= -f2- | tr -d '\"')"
-            echo "SUPABASE_DB_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres"
-          } >> "$GITHUB_ENV"
+          supabase status -o json | python3 -c '
+          import json, sys
+          s = json.load(sys.stdin)
+          out = {
+              "SUPABASE_URL": s["API_URL"],
+              "SUPABASE_DB_URL": s["DB_URL"],
+              "SUPABASE_JWT_SECRET": s["JWT_SECRET"],
+              "SUPABASE_ANON_KEY": s["ANON_KEY"],
+              "SUPABASE_SERVICE_ROLE_KEY": s["SERVICE_ROLE_KEY"],
+          }
+          with open(__import__("os").environ["GITHUB_ENV"], "a") as f:
+              for k, v in out.items():
+                  f.write(f"{k}={v}\n")
+          '
       - name: Install and test
         working-directory: apps/api
         run: |

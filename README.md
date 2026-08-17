@@ -42,6 +42,28 @@ These are not missing features; they are scoped out so that what ships is finish
 - Incident replay / trace explorer UI
 - Sandboxed shell execution, excluded intentionally: an unhardened shell tool is the most attackable surface an AI app can ship, and it deserves its own threat model before it exists anywhere
 
+## Run it locally
+
+You need Docker and Node 20+. Everything runs against a local Supabase stack; no
+accounts or secrets required.
+
+```
+cp .env.example .env      # local defaults already work
+make up                   # start Supabase + app, seed two demo orgs
+make test                 # run every test suite
+make attack               # run the cross-tenant attack suite and capture evidence
+```
+
+Then open http://localhost:3000 and sign in as `alice@example.com` /
+`Password123!`. You will see only Org A. Bob's org and notes are unreachable, by
+the database and by the API.
+
 ## Status
 
-Pre-build. Week 1 (foundation: auth, organizations, Row Level Security, CI) starts next.
+**Week 1 shipped — Trust Foundation.** Auth, organizations, and notes, with tenant
+isolation enforced by Postgres Row Level Security and a defense-in-depth
+authorization layer in the API. A five-part cross-tenant attack suite runs in CI;
+every attempt is denied and logged. See [`evidence/week1/`](evidence/week1/).
+
+Next: Week 2 introduces the first AI feature — a chat over a thin model gateway,
+with an audit log of every model call and PII redaction at the application boundary.
