@@ -1,3 +1,5 @@
+import uuid
+
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
@@ -14,17 +16,22 @@ class CreateOrg(BaseModel):
 
 @router.post("/orgs", status_code=201)
 def create_org(payload: CreateOrg, request: Request, user: User = Depends(get_current_user)):
+    # The id is generated here rather than via INSERT...RETURNING on purpose:
+    # RETURNING would apply the SELECT policy (is_org_member) to read the row back,
+    # but the creator's membership does not exist until the next statement, so the
+    # read-back would fail RLS. Generating the id avoids that ordering trap.
+    org_id = str(uuid.uuid4())
     with db_for_user(user.id) as conn:
-        org = conn.execute(
-            "insert into organizations (name) values (%s) returning id, name",
-            (payload.name,),
-        ).fetchone()
+        conn.execute(
+            "insert into organizations (id, name) values (%s, %s)",
+            (org_id, payload.name),
+        )
         conn.execute(
             "insert into memberships (user_id, org_id, role) values (%s, %s, 'owner')",
-            (user.id, org[0]),
+            (user.id, org_id),
         )
         conn.commit()
-    return {"id": str(org[0]), "name": org[1]}
+    return {"id": org_id, "name": payload.name}
 
 
 @router.get("/orgs")
