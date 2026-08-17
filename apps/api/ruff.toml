@@ -3,3 +3,5 @@ target-version = "py311"
 
 [lint]
 select = ["E", "F", "I", "UP", "B"]
+# Depends()/Query() in argument defaults is the intended FastAPI idiom, not a bug
+ignore = ["B008"]
