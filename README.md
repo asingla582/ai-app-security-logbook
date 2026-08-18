@@ -1,5 +1,7 @@
 # AI App Security Logbook
 
+**Building a secure AI app in public, one feature and one attack at a time.**
+
 > I'm building an AI assistant, then trying to break into it every week. Here's what happens.
 
 AI App Security Logbook is a public engineering journal documenting the design, construction, attack, and defense of a production-style enterprise AI application. Every architectural decision is recorded, every security control is tested, every feature is attacked before release, and every claim is backed by evidence.
