@@ -1,4 +1,4 @@
-# Week 1 Evidence — Cross-Tenant Isolation
+# Week 1 Evidence: Cross-Tenant Isolation
 
 The claim: one organization cannot reach another organization's data, and every
 attempt to try is refused and recorded. This directory is the proof.
@@ -22,7 +22,7 @@ Row Level Security, independent of the API.
 
 **Review finding (fixed):** while checking that the database-layer claim actually
 held, the original `membership_insert` policy was found to allow any authenticated
-user to insert a membership row — i.e. grant themselves into another org and then
+user to insert a membership row, i.e. grant themselves into another org and then
 read its rows. The API never exposed this, but RLS is the primary wall, so the gap
 mattered. It was closed by tightening: membership inserts are now restricted to
 org owners, and org creation runs through a `SECURITY DEFINER` function so the
@@ -33,9 +33,9 @@ test (`test_alice_cannot_grant_herself_into_bob_org`) locks it in.
 
 Everything. Two independent walls stopped every attempt:
 
-1. **Row Level Security** in Postgres — a query issued as Alice physically cannot
+1. **Row Level Security** in Postgres. A query issued as Alice physically cannot
    see or write Bob's rows. This is the primary control.
-2. **Application authorization** — the API checks membership before every
+2. **Application authorization.** The API checks membership before every
    org-scoped action and logs an `allow`/`deny` decision with a correlation id.
    This is defense-in-depth, not the only wall.
 
@@ -51,7 +51,7 @@ make attack    # run the cross-tenant attack suite, regenerate this evidence
 
 ## Honest residual note
 
-This week has no AI in it, on purpose — the question was what boundaries must
+This week has no AI in it, on purpose. The question was what boundaries must
 exist *before* a model is introduced. The isolation shown here is strong because
 it is enforced by the database, not by application code that could be bypassed
 and not by anything a model is trusted to decide. That property is the
