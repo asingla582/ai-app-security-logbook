@@ -34,12 +34,17 @@ jobs:
               for k, v in out.items():
                   f.write(f"{k}={v}\n")
           '
-      - name: Install and test
+      - name: Install, lint, and run API tests
         working-directory: apps/api
         run: |
           python -m pip install -e ".[dev]"
           ruff check .
           pytest -q
+      - name: Database-layer RLS tests
+        # Run from the repo root so the tests/rls suite is included in the gate.
+        # These prove tenant isolation at the database, independent of the API,
+        # and must not be left out of CI.
+        run: python -m pytest -q tests/rls
 
   web:
     runs-on: ubuntu-latest

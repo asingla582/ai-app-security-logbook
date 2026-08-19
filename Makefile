@@ -13,13 +13,14 @@ down:
 	npx supabase stop
 
 seed:
-	cd apps/api && . .venv/bin/activate && python ../../scripts/seed_users.py
+	set -a; . ./.env; set +a; cd apps/api && . .venv/bin/activate && python ../../scripts/seed_users.py
 
+# Runs both suites the CI gate runs: the API tests and the database-layer RLS tests.
 test:
-	cd apps/api && . .venv/bin/activate && pytest -q
+	set -a; . ./.env; set +a; . apps/api/.venv/bin/activate; python -m pytest -q apps/api/tests tests/rls
 	cd apps/web && npm test
 
 # Reproduce the Week 1 cross-tenant attack run and capture the evidence.
 attack:
 	mkdir -p evidence/week1
-	cd apps/api && . .venv/bin/activate && pytest tests/test_attacks.py -v 2>&1 | tee ../../evidence/week1/attack-run.txt
+	set -a; . ./.env; set +a; cd apps/api && . .venv/bin/activate && pytest tests/test_attacks.py -v 2>&1 | tee ../../evidence/week1/attack-run.txt
