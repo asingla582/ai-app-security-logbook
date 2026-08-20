@@ -16,7 +16,17 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import SUPABASE_JWT_SECRET
+from app.gateway import FakeGateway, get_gateway
 from app.main import app
+
+
+@pytest.fixture(autouse=True)
+def _use_fake_gateway():
+    # Every test drives the deterministic fake, never the real Anthropic API:
+    # free, offline, and no key required. Selection is server-side only.
+    app.dependency_overrides[get_gateway] = lambda: FakeGateway()
+    yield
+    app.dependency_overrides.pop(get_gateway, None)
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "http://127.0.0.1:54321")
 SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
@@ -85,6 +95,15 @@ def bob_org_id(bob_setup) -> str:
 @pytest.fixture
 def anon_client() -> TestClient:
     return _client(None)
+
+
+@pytest.fixture
+def bob_conversation(require_supabase) -> str:
+    client = _client(_new_user_token("bob"))
+    client.post("/orgs", json={"name": "Org B"})
+    conv_id = client.post("/conversations").json()["id"]
+    client.post(f"/conversations/{conv_id}/messages", json={"content": "bob's private message"})
+    return conv_id
 
 
 @pytest.fixture
