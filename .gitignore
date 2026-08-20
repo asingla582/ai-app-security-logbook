@@ -18,3 +18,4 @@ out/
 # Supabase
 supabase/.branches/
 supabase/.temp/
+*.egg-info/
