@@ -8,9 +8,7 @@ from .config import SUPABASE_DB_URL
 
 @contextlib.contextmanager
 def db_for_user(user_id: str):
-    # Set the JWT claims the way PostgREST would, so RLS policies see the caller's
-    # auth.uid(). The connection acts as the authenticated user, not as a superuser,
-    # so tenant isolation is enforced by the database on every query in this block.
+    # Impersonate the caller as the authenticated role so RLS applies, not superuser.
     with psycopg.connect(SUPABASE_DB_URL) as conn:
         cur = conn.cursor()
         claims = json.dumps({"role": "authenticated", "sub": user_id})

@@ -22,8 +22,7 @@ from app.main import app
 
 @pytest.fixture(autouse=True)
 def _use_fake_gateway():
-    # Every test drives the deterministic fake, never the real Anthropic API:
-    # free, offline, and no key required. Selection is server-side only.
+    # Every test drives the fake, never the real API (free, offline, no key).
     app.dependency_overrides[get_gateway] = lambda: FakeGateway()
     yield
     app.dependency_overrides.pop(get_gateway, None)
@@ -63,8 +62,7 @@ def _new_user_token(tag: str) -> str:
 
 @pytest.fixture(scope="session")
 def require_supabase():
-    # Only tests that need real users/rows depend on this; token-rejection tests
-    # (no token, expired token) and the auth unit tests run without a database.
+    # Only tests needing real users/rows depend on this; token-rejection tests run without a DB.
     if not _reachable():
         pytest.skip("local Supabase stack not reachable")
 

@@ -4,9 +4,7 @@ from .logging import audit
 
 
 def require_membership(conn, correlation_id: str, user_id: str, org_id: str, action: str) -> None:
-    # Defense-in-depth: RLS already scopes every query to the caller's orgs, but
-    # we check membership explicitly and log the decision so an attempt on another
-    # tenant produces a deny record, not a silent empty result.
+    # Defense-in-depth over RLS: log an explicit deny rather than a silent empty result.
     row = conn.execute(
         "select 1 from memberships where org_id = %s and user_id = %s",
         (org_id, user_id),
@@ -19,9 +17,6 @@ def require_membership(conn, correlation_id: str, user_id: str, org_id: str, act
 
 
 def require_conversation_owner(conn, correlation_id, user_id, conversation_id, action) -> str:
-    # RLS already scopes conversations to their owner, so a non-owner's query
-    # returns no row. We check explicitly and log the decision. Returns the org_id
-    # for the audit trail.
     row = conn.execute(
         "select org_id from conversations where id = %s", (conversation_id,)
     ).fetchone()

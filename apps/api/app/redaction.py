@@ -1,10 +1,5 @@
-"""Application-boundary PII redaction for the audit log.
-
-Deterministic, own-code detectors (no external NER). This reduces PII in the audit
-log; it does not eliminate it. Obfuscated, international, or novel formats slip
-through, in input and in model output alike. The audit log is PII-reduced, not
-PII-free, and the test corpus documents exactly which cases pass. See RR-W2-2.
-"""
+"""Best-effort PII redaction for the audit log. Reduces PII, does not eliminate it;
+the test corpus documents which formats slip through (RR-W2-2)."""
 
 import re
 
@@ -27,8 +22,7 @@ def _luhn_ok(digits: str) -> bool:
 
 
 def _redact_cards(text: str) -> str:
-    # Luhn-validate candidates so ordinary 13-16 digit numbers are not falsely
-    # masked as cards.
+    # Luhn-validate so ordinary long numbers are not masked as cards.
     def repl(match: re.Match) -> str:
         digits = re.sub(r"\D", "", match.group())
         if 13 <= len(digits) <= 16 and _luhn_ok(digits):
@@ -39,7 +33,6 @@ def _redact_cards(text: str) -> str:
 
 
 def redact(text: str) -> str:
-    # Cards first (before phone/SSN could nibble their digits), then the rest.
     text = _EMAIL.sub("[EMAIL]", text)
     text = _redact_cards(text)
     text = _SSN.sub("[SSN]", text)

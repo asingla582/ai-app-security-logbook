@@ -11,7 +11,7 @@ from .redaction import redact
 
 router = APIRouter()
 
-# App-authored, server-side. The client cannot supply or override this.
+# Server-side only; the client cannot supply or override this.
 SYSTEM_PROMPT = (
     "You are a helpful assistant inside a secure enterprise application. "
     "Answer the user's questions clearly and concisely."
@@ -28,8 +28,6 @@ class PostMessage(BaseModel):
 
 @router.post("/conversations", status_code=201)
 def create_conversation(request: Request, user: User = Depends(get_current_user)):
-    # A conversation belongs to its creator and no one else. org_id records the
-    # org the user was acting in; access is purely user-scoped.
     with db_for_user(user.id) as conn:
         org = conn.execute(
             "select org_id from memberships where user_id = %s limit 1", (user.id,)
@@ -74,8 +72,7 @@ def delete_conversation(
     cid = request.state.correlation_id
     with db_for_user(user.id) as conn:
         require_conversation_owner(conn, cid, user.id, conversation_id, "delete_conversation")
-        # Cascade removes the raw messages; the redacted model_calls audit rows
-        # survive with conversation_id set null (see migration 0003).
+        # Cascade deletes raw messages; redacted model_calls survive (conversation_id -> null).
         conn.execute("delete from conversations where id = %s", (conversation_id,))
         conn.commit()
 
@@ -92,8 +89,7 @@ def post_message(
     if len(payload.content) > MAX_INPUT_CHARS:
         raise HTTPException(status_code=413, detail="message too long")
 
-    # Store the user's message and read back a bounded history window, all as the
-    # owner. Committing here means the user's turn persists even if the model errors.
+    # Commit the user's turn before the model call so it persists even if the model errors.
     with db_for_user(user.id) as conn:
         org_id = require_conversation_owner(conn, cid, user.id, conversation_id, "send_message")
         conn.execute(
@@ -117,8 +113,7 @@ def post_message(
     try:
         reply = gateway.complete(SYSTEM_PROMPT, model_messages)
     except anthropic.APIError:
-        # Record the failure with redacted input and no raw content, then surface a
-        # generic error. The user's message and the model's error never leak to logs.
+        # Error path redacts too: no raw content reaches the audit or the response.
         with db_for_user(user.id) as conn:
             conn.execute(
                 "select record_model_call(%s, %s, %s, %s, %s, %s, %s, %s)",
@@ -133,7 +128,6 @@ def post_message(
             "insert into messages (conversation_id, role, content) values (%s, 'assistant', %s)",
             (conversation_id, reply.text),
         )
-        # Audit stores redacted input and output only — raw PII never reaches it.
         conn.execute(
             "select record_model_call(%s, %s, %s, %s, %s, %s, %s, %s)",
             (cid, org_id, conversation_id, CHAT_MODEL, redact(payload.content),

@@ -14,10 +14,8 @@ class CreateOrg(BaseModel):
 
 @router.post("/orgs", status_code=201)
 def create_org(payload: CreateOrg, request: Request, user: User = Depends(get_current_user)):
-    # Org creation goes through a security definer function that inserts the org
-    # and the creator's owner membership atomically. This is the only sanctioned
-    # way an org is born: direct authenticated inserts are blocked by RLS, which is
-    # what stops a user from granting themselves into an org they do not own.
+    # security definer function is the only way to create an org; direct inserts are
+    # RLS-blocked, which is what stops a user granting themselves into another org.
     with db_for_user(user.id) as conn:
         org_id = conn.execute("select create_organization(%s)", (payload.name,)).fetchone()[0]
         conn.commit()

@@ -20,9 +20,7 @@ create table notes (
   created_at timestamptz not null default now()
 );
 
--- security definer so the policy can read memberships without triggering the
--- membership table's own RLS, which would recurse. The function is the single
--- authority for "is this caller in this org" and every policy routes through it.
+-- security definer avoids recursion through memberships' own RLS.
 create function is_org_member(target_org uuid)
 returns boolean
 language sql
@@ -36,10 +34,8 @@ as $$
   );
 $$;
 
--- The authenticated role needs table-level privileges before RLS is even
--- consulted; without these, Postgres denies every row to everyone, which would
--- lock out legitimate users, not just attackers. RLS below does the actual
--- tenant filtering — grants open the door, policies decide who walks through.
+-- Grant table access first; without it Postgres denies everyone before RLS runs.
+-- RLS policies below do the actual row filtering.
 grant select, insert, update, delete on organizations to authenticated;
 grant select, insert, update, delete on memberships to authenticated;
 grant select, insert, update, delete on notes to authenticated;
@@ -51,8 +47,6 @@ alter table notes enable row level security;
 create policy org_select on organizations
   for select using (is_org_member(id));
 
--- any authenticated user may create an org; the API adds their owner membership
--- in the same transaction, so a just-created org is immediately visible to them
 create policy org_insert on organizations
   for insert with check (auth.uid() is not null);
 
@@ -65,8 +59,6 @@ create policy membership_insert on memberships
 create policy notes_select on notes
   for select using (is_org_member(org_id));
 
--- a note can only be written into an org the caller belongs to, and can only be
--- attributed to the caller — a document cannot forge its own authorship
 create policy notes_insert on notes
   for insert with check (is_org_member(org_id) and created_by = auth.uid());
 

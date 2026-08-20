@@ -1,5 +1,4 @@
--- Week 2: chat. Conversations are private to the individual user (not org-shared),
--- so the isolation model here is user-scoped, unlike Week 1's org-scoped tables.
+-- Week 2: chat. Conversations are user-scoped (private to the creator), not org-scoped.
 
 create table conversations (
   id uuid primary key default gen_random_uuid(),
@@ -18,11 +17,8 @@ create table messages (
   created_at timestamptz not null default now()
 );
 
--- Audit log of every model call. Holds only redacted content, never raw PII, so
--- it can outlive the conversation it describes. conversation_id is nullable and
--- set null on delete: deleting a conversation removes the raw messages but keeps
--- the redacted audit trail for traceability. This reconciles "deletion actually
--- deletes" (raw content) with keeping an audit record (redacted only).
+-- Audit log: redacted content only, so it survives conversation deletion
+-- (conversation_id set null) without keeping raw PII.
 create table model_calls (
   id uuid primary key default gen_random_uuid(),
   correlation_id text,
@@ -37,8 +33,7 @@ create table model_calls (
   created_at timestamptz not null default now()
 );
 
--- security definer so message policies can check conversation ownership without
--- recursing through the messages table's own RLS
+-- security definer avoids recursion through messages' own RLS.
 create function owns_conversation(target_conversation uuid)
 returns boolean
 language sql
@@ -59,9 +54,6 @@ alter table conversations enable row level security;
 alter table messages enable row level security;
 alter table model_calls enable row level security;
 
--- Conversations: only the owner sees or touches them. A just-created conversation
--- is immediately visible to its creator (user_id = auth.uid()), so INSERT...RETURNING
--- is safe here, unlike the Week 1 org-creation case.
 create policy conv_select on conversations for select using (user_id = auth.uid());
 create policy conv_insert on conversations for insert with check (user_id = auth.uid());
 create policy conv_update on conversations for update using (user_id = auth.uid());
@@ -70,10 +62,8 @@ create policy conv_delete on conversations for delete using (user_id = auth.uid(
 create policy msg_select on messages for select using (owns_conversation(conversation_id));
 create policy msg_insert on messages for insert with check (owns_conversation(conversation_id));
 
--- model_calls has RLS enabled and NO policy for authenticated, and is granted to no
--- one: end users cannot read or write the audit log directly. Writes happen only
--- through the security definer function below, which stamps user_id from auth.uid()
--- so an audit row cannot be forged for another user.
+-- model_calls has no grants/policy for authenticated: users can't read or write it.
+-- Writes go only through this function, which stamps user_id from auth.uid() (no forging).
 create function record_model_call(
   p_correlation_id text,
   p_org_id uuid,

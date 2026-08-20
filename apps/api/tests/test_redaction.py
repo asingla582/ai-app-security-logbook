@@ -31,8 +31,7 @@ def test_non_luhn_number_not_treated_as_card():
     assert "[CARD]" not in out
 
 
-# Documented residuals (RR-W2-2): these evasions are EXPECTED to slip through.
-# The tests assert the gap honestly rather than pretending redaction is complete.
+# Documented residuals (RR-W2-2): these evasions are expected to slip through.
 
 
 def test_residual_obfuscated_email_slips_through():

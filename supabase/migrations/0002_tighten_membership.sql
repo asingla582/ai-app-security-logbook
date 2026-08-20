@@ -1,13 +1,5 @@
--- Week 1 hardening: close a self-service membership escalation.
---
--- The original membership_insert policy allowed any authenticated user to insert
--- any membership row, so Alice could grant herself into Bob's org at the database
--- layer and then read his rows. RLS is the primary wall in this system, so a gap
--- here is not theoretical. This migration tightens the boundary; it does not
--- loosen any read policy.
-
--- Only an existing owner of an org may add members to it. security definer so the
--- check can read memberships without recursing through the table's own RLS.
+-- Week 1 hardening: the original membership_insert let any user grant themselves
+-- into any org. Restrict membership inserts to existing owners; loosen nothing.
 create function is_org_owner(target_org uuid)
 returns boolean
 language sql
@@ -25,11 +17,8 @@ drop policy membership_insert on memberships;
 create policy membership_insert on memberships
   for insert with check (is_org_owner(org_id));
 
--- Bootstrapping problem: the first owner can't already be an owner. Org creation
--- therefore runs in a security definer function that inserts the org and the
--- creator's owner membership atomically, as a single trusted operation. Direct
--- authenticated inserts into organizations are no longer allowed, so this function
--- is the only way an org comes into existence.
+-- The first owner can't already be an owner, so org creation moves into a security
+-- definer function; direct org inserts are dropped, making it the only entry point.
 drop policy org_insert on organizations;
 
 create function create_organization(org_name text)

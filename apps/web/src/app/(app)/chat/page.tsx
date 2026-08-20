@@ -102,9 +102,7 @@ export default function ChatPage() {
             <div className="flex-1 space-y-3 overflow-y-auto p-4">
               {messages.map((m, i) => (
                 <div key={i} className={m.role === "user" ? "text-right" : "text-left"}>
-                  {/* Rendered as escaped plain text on purpose (React default). No
-                      markdown or HTML: the reply is attacker-influenceable, and
-                      output-side sanitization is Week 6, not this week. */}
+                  {/* Escaped plain text on purpose; output sanitization is Week 6. */}
                   <span
                     className={`inline-block max-w-[80%] whitespace-pre-wrap rounded-2xl px-3 py-2 text-sm ${
                       m.role === "user"
