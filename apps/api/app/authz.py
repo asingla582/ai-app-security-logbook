@@ -17,8 +17,10 @@ def require_membership(conn, correlation_id: str, user_id: str, org_id: str, act
 
 
 def require_conversation_owner(conn, correlation_id, user_id, conversation_id, action) -> str:
+    # Check user_id explicitly so this holds even if RLS is ever bypassed, not just implicitly.
     row = conn.execute(
-        "select org_id from conversations where id = %s", (conversation_id,)
+        "select org_id from conversations where id = %s and user_id = %s",
+        (conversation_id, user_id),
     ).fetchone()
     if row is None:
         audit(correlation_id, user_id, conversation_id, action, "deny")
