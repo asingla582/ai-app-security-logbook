@@ -1,13 +1,25 @@
 import uuid
 
 from fastapi import Depends, FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 
 from .auth import User, get_current_user
+from .config import WEB_ORIGIN
 from .routes_chat import router as chat_router
 from .routes_notes import router as notes_router
 from .routes_orgs import router as orgs_router
 
 app = FastAPI(title="AI App Security Logbook API")
+
+# Auth is via bearer token, not cookies, so credentials are not allowed and the
+# origin is a specific host, never a wildcard.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[WEB_ORIGIN],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Correlation-Id"],
+)
+
 app.include_router(orgs_router)
 app.include_router(notes_router)
 app.include_router(chat_router)

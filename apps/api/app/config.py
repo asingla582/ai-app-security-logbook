@@ -18,6 +18,9 @@ SUPABASE_DB_URL = os.environ.get(
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 CHAT_MODEL = os.environ.get("CHAT_MODEL", "claude-opus-4-8")
 
+# The browser origin allowed to call the API. Scoped, not a wildcard.
+WEB_ORIGIN = os.environ.get("WEB_ORIGIN", "http://localhost:3000")
+
 # Per-call cost bounds; per-user rate limiting is Week 7.
 MAX_OUTPUT_TOKENS = int(os.environ.get("MAX_OUTPUT_TOKENS", "1024"))
 MAX_INPUT_CHARS = int(os.environ.get("MAX_INPUT_CHARS", "8000"))

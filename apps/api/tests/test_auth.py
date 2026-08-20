@@ -22,3 +22,8 @@ def test_response_has_correlation_id():
 def test_incoming_correlation_id_is_echoed():
     r = client.get("/health", headers={"X-Correlation-Id": "trace-123"})
     assert r.headers["X-Correlation-Id"] == "trace-123"
+
+
+def test_cors_allows_the_web_origin():
+    r = client.get("/health", headers={"Origin": "http://localhost:3000"})
+    assert r.headers.get("access-control-allow-origin") == "http://localhost:3000"
