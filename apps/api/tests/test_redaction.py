@@ -31,7 +31,30 @@ def test_non_luhn_number_not_treated_as_card():
     assert "[CARD]" not in out
 
 
-# Documented residuals (RR-W2-2): these evasions are expected to slip through.
+def test_structured_secrets_masked():
+    caught = {
+        "aws key": "AKIAIOSFODNN7EXAMPLE",
+        "openai/anthropic": "sk-ant-api03-abc123def456ghi789",
+        "github": "ghp_" + "a" * 36,
+        "slack": "xoxb-123456789012-abcdefghijkl",
+        "google": "AIza" + "b" * 35,
+        "bearer": "Authorization: Bearer abcdef0123456789ghijkl",
+    }
+    for label, secret in caught.items():
+        out = redact(f"the value is {secret}")
+        assert "[SECRET]" in out, label
+        assert secret not in out, label
+
+
+def test_private_key_block_masked():
+    key = "-----BEGIN RSA PRIVATE KEY-----\nMIIBmabc\n-----END RSA PRIVATE KEY-----"
+    out = redact(f"here it is:\n{key}")
+    assert "[SECRET]" in out
+    assert "MIIBmabc" not in out
+
+
+# Documented residuals (RR-W2-2): these are expected to slip through. Secret
+# detection is signature-based, so anything without a known shape is not caught.
 
 
 def test_residual_obfuscated_email_slips_through():
@@ -42,3 +65,15 @@ def test_residual_obfuscated_email_slips_through():
 def test_residual_international_phone_slips_through():
     out = redact("ring +44 20 7946 0958")
     assert "[PHONE]" not in out  # known gap, documented
+
+
+def test_residual_freeform_password_slips_through():
+    # A free-form password has no signature to match without carpet-bombing prose.
+    out = redact("my password is Hunter2!Correct-Horse")
+    assert "[SECRET]" not in out
+
+
+def test_residual_unknown_token_format_slips_through():
+    # The AWS *secret* key (no prefix) and custom tokens are not catchable by shape.
+    out = redact("secret is wJalrXUtnFEMIK7MDENGbPxRfiCYzEXAMPLEKEY")
+    assert "[SECRET]" not in out
