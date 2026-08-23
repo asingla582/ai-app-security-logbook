@@ -18,6 +18,7 @@ attacks (`redteam.py`; captured run in `redteam-run.txt`):
 | 5 | Role injection (extra `role` field in the body) | ignored, 201 | ours (server-set role) |
 | 6 | PII (email/SSN/card) into the audit log | redacted | ours (redaction) |
 | 7 | PII redaction evasion (obfuscated email) | **leaked** | — |
+| 8 | Secret pasted into chat (AWS key + password) | key masked, **password leaked** | ours (partial) |
 
 ## What held
 
@@ -34,18 +35,33 @@ attacks (`redteam.py`; captured run in `redteam-run.txt`):
 
 ## What broke
 
-**PII redaction is best-effort (RR-W2-2), demonstrated live.** Sending
-`my social is 123 45 6789 and reach me at mallory [at] evil [dot] com`, the audit log
-stored:
+Redaction is best-effort, and the real weakness is not clever evasion but
+**categorical incompleteness** — the scrubber only recognizes a handful of shapes.
+
+**Obfuscated PII (RR-W2-2).** Sending
+`my social is 123 45 6789 and reach me at mallory [at] evil [dot] com`, the audit stored:
 
 ```
 my social is [SSN] and reach me at mallory [at] evil [dot] com
 ```
 
-The SSN was masked; the obfuscated email walked straight through, because it is not a
-standard `@`-shaped address. The audit log — the one place promised to hold no raw PII
-— now contains a personal email. Redaction reduces PII exposure; it does not eliminate
-it. A normally-written email is caught; a slightly non-standard one is not.
+The SSN was masked; the disguised email (no `@`) walked through.
+
+**Secrets, no cleverness required.** Structured secrets with a known signature (AWS
+keys, GitHub/Slack tokens, bearer tokens, private-key blocks, JWTs) are now masked to
+`[SECRET]`. But a **free-form password has no signature to match**, so it leaks:
+
+```
+sent:  deploy key AKIAIOSFODNN7EXAMPLE and my password is Hunter2!Correct-Horse
+audit: deploy key [SECRET] and my password is Hunter2!Correct-Horse
+```
+
+The AWS key is caught; the password sits in the log in plain text. This needs no
+attacker at all — people paste credentials into assistants constantly. The honest
+statement: redaction reduces exposure of PII and structured secrets; it does not
+eliminate either. Whole categories (names, addresses, medical data, free-form
+secrets) are not checked. See the corpus in `apps/api/tests/test_redaction.py`, which
+asserts both the catches and the documented misses.
 
 ## Honest notes
 

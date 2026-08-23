@@ -116,10 +116,30 @@ def main():
     p()
     pause()
 
+    p(f"{B}[6] Secrets in the audit log - structured vs free-form{X}")
+    secret_msg = "deploy key AKIAIOSFODNN7EXAMPLE and my password is Hunter2!Correct-Horse"
+    p(f"  sent:  {Y}{secret_msg}{X}")
+    chat(ha, aconv, secret_msg)
+    with psycopg.connect(DB) as c:
+        stored2 = c.execute(
+            "select redacted_input from model_calls where conversation_id = %s "
+            "order by created_at desc limit 1",
+            (aconv,),
+        ).fetchone()[0]
+    p(f"  audit: {stored2}")
+    if "[SECRET]" in stored2:
+        held("structured secret (AWS key) masked -> [SECRET]")
+    if "Hunter2" in stored2:
+        broke("free-form password LEAKED -> no signature to match (documented residual)")
+    p()
+    pause()
+
     p(f"{B}=== summary ==={X}")
     p(f"  {G}Held:{X}  tenant isolation (IDOR read + write), cross-tenant exfil (architectural)")
-    p(f"  {R}Broke:{X} PII redaction is best-effort - obfuscated PII reached the audit log")
-    p(f"  {DIM}The two injection 'holds' are Claude's alignment, not our code - that is what")
+    p(f"  {R}Broke:{X} redaction is best-effort - obfuscated PII and free-form secrets reach the log")
+    p(f"  {DIM}Structured secrets (AWS/GitHub/etc.) are masked, but the scrubber only knows")
+    p(f"  a handful of shapes; anything without a signature walks through untouched.")
+    p(f"  The two injection 'holds' are Claude's alignment, not our code - that is what")
     p(f"  Weeks 3 (instruction security) and 6 (output handling) exist to build ourselves.{X}")
 
 
