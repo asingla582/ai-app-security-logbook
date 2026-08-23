@@ -32,6 +32,15 @@ def test_oversized_message_rejected(alice_client):
     assert r.status_code == 413
 
 
+def test_malformed_conversation_id_is_404_not_500(alice_client):
+    _own_conversation(alice_client)
+    assert alice_client.get("/conversations/not-a-uuid").status_code == 404
+
+
+def test_malformed_org_id_is_404_not_500(alice_client):
+    assert alice_client.get("/orgs/not-a-uuid/notes").status_code == 404
+
+
 def test_pii_never_lands_in_the_audit_log(alice_client):
     conv_id = _own_conversation(alice_client)
     alice_client.post(
