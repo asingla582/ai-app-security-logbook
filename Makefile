@@ -1,4 +1,4 @@
-.PHONY: up down test attack seed
+.PHONY: up down test attack seed eval eval-baseline
 
 # One command for a stranger: bring up Supabase, seed demo tenants, run the app.
 up:
@@ -24,3 +24,15 @@ test:
 attack:
 	mkdir -p evidence/week1
 	set -a; . ./.env; set +a; cd apps/api && . .venv/bin/activate && pytest tests/test_attacks.py -v 2>&1 | tee ../../evidence/week1/attack-run.txt
+
+# Week 3 direct-injection eval against the shipped prompt; report is the release evidence.
+eval:
+	mkdir -p evidence/week3
+	set -a; . ./.env; set +a; PROMPTFOO_PYTHON=apps/api/.venv/bin/python npx promptfoo@0.120.27 eval -c evals/promptfooconfig.yaml --no-cache --no-share \
+		-o evidence/week3/promptfoo-report.json 2>&1 | tee evidence/week3/eval-run.txt
+
+# Same corpus against the Week 2 prompt (chat v1) for the before/after comparison.
+eval-baseline:
+	mkdir -p evidence/week3
+	set -a; . ./.env; set +a; PROMPTFOO_PYTHON=apps/api/.venv/bin/python npx promptfoo@0.120.27 eval -c evals/promptfooconfig.baseline.yaml --no-cache --no-share \
+		-o evidence/week3/promptfoo-report-baseline-v1.json 2>&1 | tee evidence/week3/eval-run-baseline-v1.txt

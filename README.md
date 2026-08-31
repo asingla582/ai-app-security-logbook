@@ -67,5 +67,16 @@ isolation enforced by Postgres Row Level Security and a defense-in-depth
 authorization layer in the API. A five-part cross-tenant attack suite runs in CI;
 every attempt is denied and logged. See [`evidence/week1/`](evidence/week1/).
 
-Next: Week 2 introduces the first AI feature — a chat over a thin model gateway,
-with an audit log of every model call and PII redaction at the application boundary.
+**Week 2 shipped — First AI Slice.** Chat over a thin model gateway, a structured
+audit log of every model call (redacted at the application boundary, correlated by
+request ID), and conversation lifecycle with real deletion. Attacked live; the
+redaction findings and fixes are in [`evidence/week2/`](evidence/week2/).
+
+**Week 3 shipped — Instruction Security.** Versioned prompt templates with the
+prompt hash recorded in the audit log, structural separation so user input can
+never occupy the system slot, and a Promptfoo direct-injection suite (override,
+role hijack, instruction leak) gating CI. Before/after eval reports in
+[`evidence/week3/`](evidence/week3/).
+
+Next: Week 4 is hardening only — close open findings, complete threat model v1,
+and polish setup for the v0.4 "Trust Foundation" release.

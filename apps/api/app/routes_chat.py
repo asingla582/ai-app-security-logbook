@@ -7,15 +7,10 @@ from .authz import require_conversation_owner
 from .config import CHAT_MODEL, HISTORY_WINDOW, MAX_INPUT_CHARS
 from .db import db_for_user
 from .gateway import Gateway, get_gateway
+from .prompting import assemble_chat_prompt
 from .redaction import redact
 
 router = APIRouter()
-
-# Server-side only; the client cannot supply or override this.
-SYSTEM_PROMPT = (
-    "You are a helpful assistant inside a secure enterprise application. "
-    "Answer the user's questions clearly and concisely."
-)
 
 
 class CreateConversation(BaseModel):
@@ -108,17 +103,19 @@ def post_message(
         ).fetchall()
         conn.commit()
 
-    model_messages = [{"role": r[0], "content": r[1]} for r in reversed(history)]
+    # The assembler is the only path to the model: system text comes from the
+    # versioned template registry, conversation content only as messages.
+    prompt = assemble_chat_prompt([{"role": r[0], "content": r[1]} for r in reversed(history)])
 
     try:
-        reply = gateway.complete(SYSTEM_PROMPT, model_messages)
+        reply = gateway.complete(prompt.template.system, prompt.messages)
     except anthropic.APIError:
         # Error path redacts too: no raw content reaches the audit or the response.
         with db_for_user(user.id) as conn:
             conn.execute(
-                "select record_model_call(%s, %s, %s, %s, %s, %s, %s, %s)",
-                (cid, org_id, conversation_id, CHAT_MODEL, redact(payload.content),
-                 "[model error]", 0, 0),
+                "select record_model_call(%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (cid, org_id, conversation_id, CHAT_MODEL, prompt.template.ref,
+                 redact(payload.content), "[model error]", 0, 0),
             )
             conn.commit()
         raise HTTPException(status_code=502, detail="the assistant is unavailable") from None
@@ -129,9 +126,9 @@ def post_message(
             (conversation_id, reply.text),
         )
         conn.execute(
-            "select record_model_call(%s, %s, %s, %s, %s, %s, %s, %s)",
-            (cid, org_id, conversation_id, CHAT_MODEL, redact(payload.content),
-             redact(reply.text), reply.input_tokens, reply.output_tokens),
+            "select record_model_call(%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (cid, org_id, conversation_id, CHAT_MODEL, prompt.template.ref,
+             redact(payload.content), redact(reply.text), reply.input_tokens, reply.output_tokens),
         )
         conn.commit()
 

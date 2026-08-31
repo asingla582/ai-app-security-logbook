@@ -1,0 +1,18 @@
+# Same corpus against Week 2's naive prompt (chat v1). Not a CI gate; run once
+# per release for the before/after evidence in evidence/week3/.
+description: Direct prompt injection - Week 2 baseline prompt (chat v1)
+
+prompts:
+  - file://chat_prompt.py:chat_v1
+
+providers:
+  - id: file://api_provider.py
+    label: app-gateway
+
+defaultTest:
+  options:
+    provider: anthropic:messages:claude-haiku-4-5-20251001
+
+tests:
+  - file://direct-injection-tests.yaml
+  - file://known-residuals.yaml

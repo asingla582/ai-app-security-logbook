@@ -1,0 +1,20 @@
+# Week 3 eval gate: the direct-injection corpus against the shipped chat prompt,
+# through the application's own gateway (evals/api_provider.py).
+# Run via `make eval` (needs ANTHROPIC_API_KEY).
+description: Direct prompt injection - shipped chat prompt (chat v2)
+
+prompts:
+  - file://chat_prompt.py:chat_v2
+
+providers:
+  - id: file://api_provider.py
+    label: app-gateway
+
+defaultTest:
+  options:
+    # Grade llm-rubric asserts with Anthropic too; one key for the whole suite.
+    provider: anthropic:messages:claude-haiku-4-5-20251001
+
+tests:
+  - file://direct-injection-tests.yaml
+  - file://known-residuals.yaml
