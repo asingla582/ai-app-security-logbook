@@ -73,9 +73,12 @@ request ID), and conversation lifecycle with real deletion. Attacked live; the
 redaction findings and fixes are in [`evidence/week2/`](evidence/week2/).
 
 **Week 3 shipped — Instruction Security.** Versioned prompt templates with the
-prompt hash recorded in the audit log, structural separation so user input can
-never occupy the system slot, and a Promptfoo direct-injection suite (override,
-role hijack, instruction leak) gating CI. Before/after eval reports in
+prompt hash recorded in the audit log, and structural separation so user input can
+never occupy the system slot (proven by tests that never call the model). A
+Promptfoo direct-injection suite (override, role hijack, instruction leak) measures
+the model-in-the-loop behavior: over 10 runs, 17 of 19 attacks were blocked every
+time, while instruction-leak resistance wavers and one payload-splitting attack
+always succeeds. Measured results and the honest residuals are in
 [`evidence/week3/`](evidence/week3/).
 
 Next: Week 4 is hardening only — close open findings, complete threat model v1,
