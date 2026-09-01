@@ -79,8 +79,10 @@ Promptfoo direct-injection suite (override, role hijack, instruction leak) measu
 the model-in-the-loop behavior. The first hardened prompt leaked its instructions
 on a minority of runs, caught only by running the corpus 10 times; a further
 hardening (chat v3) closed it, and all 19 attacks were blocked on all 10 runs. One
-payload-splitting attack still succeeds by design. Measured before/after results
-and the honest residuals are in [`evidence/week3/`](evidence/week3/).
+string-puzzle case (payload splitting) is kept as a documented canary: harmless in
+this app today, but a preview of why model output can't be trusted once it is
+rendered or fed to a tool (Week 6). Measured before/after results and the honest
+residuals are in [`evidence/week3/`](evidence/week3/).
 
 Next: Week 4 is hardening only — close open findings, complete threat model v1,
 and polish setup for the v0.4 "Trust Foundation" release.
