@@ -18,7 +18,7 @@ _TEMPLATE_DIR = Path(__file__).parent / "prompts"
 # again here keeps the prompt layer independent of the storage layer.
 _ALLOWED_ROLES = frozenset({"user", "assistant"})
 
-ACTIVE_CHAT_VERSION = 2
+ACTIVE_CHAT_VERSION = 3
 
 
 @dataclass(frozen=True)

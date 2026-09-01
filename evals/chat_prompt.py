@@ -24,5 +24,10 @@ def chat_v1(context: dict) -> list[dict]:
 
 
 def chat_v2(context: dict) -> list[dict]:
-    # The shipped prompt; this is what the CI gate runs against.
+    # Week 3's first hardened prompt; kept for before/after comparison.
     return _messages(2, context)
+
+
+def chat_v3(context: dict) -> list[dict]:
+    # The shipped prompt; this is what the CI gate runs against.
+    return _messages(3, context)
