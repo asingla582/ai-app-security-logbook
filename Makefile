@@ -1,8 +1,15 @@
-.PHONY: up down test attack seed eval eval-baseline
+.PHONY: up down setup test attack seed eval eval-baseline
 
-# One command for a stranger: bring up Supabase, seed demo tenants, run the app.
-up:
+# Prepare a fresh clone: start Supabase, fill .env with its local keys, and build
+# the API virtualenv. Idempotent, safe to re-run. Needs Docker, Node (npx), Python 3.
+setup:
 	npx supabase start
+	python3 scripts/bootstrap_env.py
+	cd apps/api && python3 -m venv .venv && . .venv/bin/activate && python -m pip install -q -e ".[dev]"
+
+# One command for a stranger: bootstrap, seed demo tenants, run the app.
+up:
+	$(MAKE) setup
 	$(MAKE) seed
 	docker compose up --build -d
 	@echo "web  http://localhost:3000"

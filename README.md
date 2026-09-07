@@ -46,15 +46,20 @@ These are not missing features; they are scoped out so that what ships is finish
 
 ## Run it locally
 
-You need Docker and Node 20+. Everything runs against a local Supabase stack; no
-accounts or secrets required.
+Prerequisites: Docker (running), Node 20+ (for `npx`), and Python 3.11+.
+Everything runs against a local Supabase stack; no accounts or secrets required.
 
 ```
-cp .env.example .env      # local defaults already work
-make up                   # start Supabase + app, seed two demo orgs
-make test                 # run every test suite
-make attack               # run the cross-tenant attack suite and capture evidence
+make up      # bootstrap + seed + run: Supabase, .env, API venv, two demo orgs, app
+make test    # run every test suite
+make attack  # run the cross-tenant attack suite and capture evidence
 ```
+
+`make up` is self-contained on a fresh clone: it starts the local Supabase stack,
+writes the local keys into `.env`, builds the API virtualenv, seeds the demo
+tenants, and launches the app. Chatting against the real model is optional; add
+`ANTHROPIC_API_KEY` to `.env` for that. Without it, the app and the full test suite
+still run against a deterministic fake.
 
 Then open http://localhost:3000 and sign in as `alice@example.com` /
 `Password123!`. You will see only Org A. Bob's org and notes are unreachable, by
@@ -86,5 +91,18 @@ a preview of why model output can't be trusted once it is rendered or fed to a t
 (Week 6). Measured results, the correction, and the honest residuals are in
 [`evidence/week3/`](evidence/week3/).
 
-Next: Week 4 is hardening only — close open findings, complete threat model v1,
-and polish setup for the v0.4 "Trust Foundation" release.
+**Week 4 shipped — v0.4 "Trust Foundation."** Hardening only, no new features. The
+open findings from weeks 1-3 are triaged in a versioned [threat model](security/threat-model.md)
+(closed-loop framing, mapped to OWASP LLM Top 10, NIST AI RMF, and MITRE ATLAS, with
+an honest maturity self-assessment) and summarized in a [system card](security/system-card.md).
+Local setup now works from a fresh clone: `make up` starts Supabase, fills `.env`,
+builds the API venv, seeds demo tenants, and runs the app.
+
+Next: Phase 2 opens with Week 5 (secure RAG) — retrieval authorized by the database,
+not the model, with provenance recorded in the audit log.
+
+## Security
+
+- [Threat model](security/threat-model.md) — trust boundaries, findings register, framework mapping, maturity self-assessment.
+- [System card](security/system-card.md) — model, data, evaluations, residual risks.
+- Per-week attack evidence: [`evidence/`](evidence/).

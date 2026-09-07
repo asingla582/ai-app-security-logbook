@@ -10,7 +10,12 @@ import httpx
 import psycopg
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "http://127.0.0.1:54321")
-SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+if not SERVICE_KEY:
+    raise SystemExit(
+        "SUPABASE_SERVICE_ROLE_KEY is not set. Run `make setup` (or, with Supabase "
+        "already running, `python3 scripts/bootstrap_env.py`) to fill .env."
+    )
 DB_URL = os.environ.get("SUPABASE_DB_URL", "postgresql://postgres:postgres@127.0.0.1:54322/postgres")
 
 DEMO = [
