@@ -61,3 +61,8 @@ class FakeEmbedder:
 def get_embedder() -> Embedder:
     # Server-side selection only; tests override this dependency with the fake.
     return OpenAIEmbedder()
+
+
+def to_pgvector(vector: Vector) -> str:
+    """Render a vector as a pgvector literal for a ::vector cast."""
+    return "[" + ",".join(repr(float(x)) for x in vector) + "]"

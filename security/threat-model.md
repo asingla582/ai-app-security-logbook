@@ -1,6 +1,6 @@
 # Threat Model v1
 
-**Version:** 1.0 · **Date:** 2026-09-06 · **Milestone:** v0.4 "Trust Foundation"
+**Version:** 1.0, plus a v1.1 delta (Week 5 RAG) in the Update log · **Date:** 2026-09-06 · **Milestone:** v0.4 "Trust Foundation"
 **Refresh cadence:** revised at each milestone (next at v0.8, then v1.0). A threat
 model is evidence, and evidence goes stale; treat anything here as true only as of
 the date above and the commit it ships with.
@@ -194,3 +194,32 @@ layers, and every model-facing safety claim is stated as a measured rate with th
 evidence linked. The known-open items (redaction residuals, denial-of-wallet,
 output-channel handling) are named above with owners and target weeks. Nothing here
 is claimed as "solved."
+
+---
+
+## Update log
+
+A threat model is evidence and evidence goes stale; deltas between milestone
+rewrites are recorded here so the document tracks reality, not just release dates.
+
+### v1.1 — Week 5 (2026-09-15): secure RAG
+
+New capability: the assistant can retrieve an organization's uploaded documents and
+answer from them. New surface and controls:
+
+- **Retrieval authorization (new, controlled).** Documents and chunks are org-scoped;
+  retrieval is a pgvector similarity search that RLS (`is_org_member`) plus an explicit
+  org filter constrain to the caller's org *before* ranking. The model never chooses
+  what it may read. Proven with no model in the loop, including a crafted-vector case
+  (`tests/rls/test_rag_isolation.py`) and the chat path (`apps/api/tests/test_rag_chat.py`).
+  Maps to OWASP **LLM08 Vector/Embedding Weaknesses** and general access control.
+- **Data lineage (new).** Each `model_calls` row now records the retrieved document ids
+  (`sources`), so an answer traces to its prompt template *and* its sources.
+- **Embedding data-egress (new, accepted).** Document text is sent to OpenAI at ingest
+  to produce embeddings (chosen provider). First tenant-data egress to a third party
+  and a second AI vendor: a real data-in-transit / supply-chain consideration
+  (OWASP **LLM03**). Tests/CI use a deterministic offline fake and send nothing.
+- **Deferred → Week 6:** indirect prompt injection via retrieved document content.
+  Retrieved text enters the user/data channel as a labeled block (structurally not an
+  instruction), but a malicious document could still attempt to steer the answer.
+  Provenance/trust labels and output-side exfiltration defenses land in Week 6.

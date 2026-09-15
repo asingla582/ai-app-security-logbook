@@ -16,7 +16,7 @@ from .authz import require_membership
 from .chunking import chunk_text
 from .config import CHUNK_OVERLAP, CHUNK_SIZE, MAX_DOCUMENT_CHARS
 from .db import db_for_user
-from .embeddings import Embedder, get_embedder
+from .embeddings import Embedder, get_embedder, to_pgvector
 
 router = APIRouter()
 
@@ -27,10 +27,6 @@ class CreateDocument(BaseModel):
     filename: str = Field(min_length=1, max_length=255)
     content: str
     sensitivity: str = "internal"
-
-
-def _vector_literal(vector: list[float]) -> str:
-    return "[" + ",".join(repr(float(x)) for x in vector) + "]"
 
 
 @router.post("/orgs/{org_id}/documents", status_code=201)
@@ -66,7 +62,7 @@ def create_document(
             conn.execute(
                 "insert into document_chunks (document_id, org_id, ordinal, content, embedding) "
                 "values (%s, %s, %s, %s, %s::vector)",
-                (doc[0], org_id, ordinal, chunk, _vector_literal(embedding)),
+                (doc[0], org_id, ordinal, chunk, to_pgvector(embedding)),
             )
         conn.commit()
     return {"id": str(doc[0]), "filename": payload.filename, "sensitivity": payload.sensitivity,

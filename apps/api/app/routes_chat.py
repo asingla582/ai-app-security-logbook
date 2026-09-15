@@ -1,11 +1,14 @@
+import json
+
 import anthropic
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from .auth import User, get_current_user
 from .authz import require_conversation_owner
-from .config import CHAT_MODEL, HISTORY_WINDOW, MAX_INPUT_CHARS
+from .config import CHAT_MODEL, HISTORY_WINDOW, MAX_INPUT_CHARS, RETRIEVAL_TOP_K
 from .db import db_for_user
+from .embeddings import Embedder, get_embedder, to_pgvector
 from .gateway import Gateway, get_gateway
 from .prompting import assemble_chat_prompt
 from .redaction import redact
@@ -79,6 +82,7 @@ def post_message(
     request: Request,
     user: User = Depends(get_current_user),
     gateway: Gateway = Depends(get_gateway),
+    embedder: Embedder = Depends(get_embedder),
 ):
     cid = request.state.correlation_id
     if len(payload.content) > MAX_INPUT_CHARS:
@@ -103,9 +107,14 @@ def post_message(
         ).fetchall()
         conn.commit()
 
+    context, citations, source_ids = _retrieve(user.id, org_id, payload.content, embedder)
+
     # The assembler is the only path to the model: system text comes from the
-    # versioned template registry, conversation content only as messages.
-    prompt = assemble_chat_prompt([{"role": r[0], "content": r[1]} for r in reversed(history)])
+    # versioned template registry; conversation content and retrieved context only
+    # ever enter as messages, never the system slot.
+    prompt = assemble_chat_prompt(
+        [{"role": r[0], "content": r[1]} for r in reversed(history)], context=context
+    )
 
     try:
         reply = gateway.complete(prompt.template.system, prompt.messages)
@@ -113,9 +122,9 @@ def post_message(
         # Error path redacts too: no raw content reaches the audit or the response.
         with db_for_user(user.id) as conn:
             conn.execute(
-                "select record_model_call(%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                "select record_model_call(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)",
                 (cid, org_id, conversation_id, CHAT_MODEL, prompt.template.ref,
-                 redact(payload.content), "[model error]", 0, 0),
+                 redact(payload.content), "[model error]", 0, 0, json.dumps(source_ids)),
             )
             conn.commit()
         raise HTTPException(status_code=502, detail="the assistant is unavailable") from None
@@ -126,10 +135,33 @@ def post_message(
             (conversation_id, reply.text),
         )
         conn.execute(
-            "select record_model_call(%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "select record_model_call(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)",
             (cid, org_id, conversation_id, CHAT_MODEL, prompt.template.ref,
-             redact(payload.content), redact(reply.text), reply.input_tokens, reply.output_tokens),
+             redact(payload.content), redact(reply.text), reply.input_tokens, reply.output_tokens,
+             json.dumps(source_ids)),
         )
         conn.commit()
 
-    return {"reply": reply.text}
+    return {"reply": reply.text, "sources": citations}
+
+
+def _retrieve(user_id: str, org_id: str, query: str, embedder: Embedder):
+    """Top-k org-scoped chunks for the query. RLS plus the explicit org_id filter
+    keep retrieval inside the conversation's tenant; the model never chooses what it
+    is allowed to read. Returns (context_block, citations, distinct_source_ids)."""
+    query_vector = embedder.embed([query])[0]
+    with db_for_user(user_id) as conn:
+        rows = conn.execute(
+            "select c.document_id, d.filename, c.content "
+            "from document_chunks c join documents d on d.id = c.document_id "
+            "where c.org_id = %s order by c.embedding <=> %s::vector limit %s",
+            (org_id, to_pgvector(query_vector), RETRIEVAL_TOP_K),
+        ).fetchall()
+    if not rows:
+        return None, [], []
+    parts, citations, source_ids = [], [], []
+    for i, (document_id, filename, content) in enumerate(rows, start=1):
+        parts.append(f"[source {i}] ({filename})\n{content}")
+        citations.append({"source": i, "document_id": str(document_id), "filename": filename})
+        source_ids.append(str(document_id))
+    return "\n\n".join(parts), citations, list(dict.fromkeys(source_ids))
