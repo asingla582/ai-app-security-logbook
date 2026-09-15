@@ -16,16 +16,19 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import SUPABASE_JWT_SECRET
+from app.embeddings import FakeEmbedder, get_embedder
 from app.gateway import FakeGateway, get_gateway
 from app.main import app
 
 
 @pytest.fixture(autouse=True)
-def _use_fake_gateway():
-    # Every test drives the fake, never the real API (free, offline, no key).
+def _use_fakes():
+    # Every test drives the fakes, never a real API (free, offline, no key).
     app.dependency_overrides[get_gateway] = lambda: FakeGateway()
+    app.dependency_overrides[get_embedder] = lambda: FakeEmbedder()
     yield
     app.dependency_overrides.pop(get_gateway, None)
+    app.dependency_overrides.pop(get_embedder, None)
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "http://127.0.0.1:54321")
 SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
