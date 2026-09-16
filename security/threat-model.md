@@ -219,7 +219,11 @@ answer from them. New surface and controls:
   to produce embeddings (chosen provider). First tenant-data egress to a third party
   and a second AI vendor: a real data-in-transit / supply-chain consideration
   (OWASP **LLM03**). Tests/CI use a deterministic offline fake and send nothing.
-- **Deferred → Week 6:** indirect prompt injection via retrieved document content.
-  Retrieved text enters the user/data channel as a labeled block (structurally not an
-  instruction), but a malicious document could still attempt to steer the answer.
-  Provenance/trust labels and output-side exfiltration defenses land in Week 6.
+- **Demonstrated open risk → Week 6:** indirect content poisoning via retrieved
+  documents. The "reference, not instructions" label stops blunt injection, but a
+  red-team against the live model (`evidence/week5/redteam_indirect.py`) showed the
+  assistant faithfully relaying a forged document's phishing URL and fake infra
+  details to the user, each with a citation. This is not a jailbreak the model can
+  refuse; it is RAG trusting retrieved content by design (OWASP **LLM04** data/model
+  poisoning, **LLM05** improper output handling). Provenance/trust labels and
+  output-side defenses land in Week 6. This is an open finding as of v1.1.
