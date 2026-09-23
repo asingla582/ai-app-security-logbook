@@ -1,6 +1,6 @@
 # Threat Model v1
 
-**Version:** 1.0, plus a v1.1 delta (Week 5 RAG) in the Update log · **Date:** 2026-09-06 · **Milestone:** v0.4 "Trust Foundation"
+**Version:** 1.0, plus deltas in the Update log: v1.1 (Week 5 RAG), v1.2 (Week 6 indirect injection + output handling) · **Date:** 2026-09-06 · **Milestone:** v0.4 "Trust Foundation"
 **Refresh cadence:** revised at each milestone (next at v0.8, then v1.0). A threat
 model is evidence, and evidence goes stale; treat anything here as true only as of
 the date above and the commit it ships with.
@@ -147,9 +147,10 @@ Every documented finding from weeks 1-3, with an honest status. "Closed" here me
 | RR-W2-1 | Obfuscated PII (e.g. `x [at] y [dot] com`) slips redaction | **Open, accepted** | Architectural limit of signature matching; mitigated by data-minimization stance (§3) |
 | RR-W2-2 | Free-form secrets (e.g. a pasted password) slip redaction | **Open, accepted** | Same; no signature to match. Documented, not silently ignored |
 | DoW | Denial-of-wallet: unrestricted signup, no rate limiting | **Deferred → Week 7** | Rate limiting / resource caps |
-| RR-W3-1 | Payload splitting steers exact output (`PW`+`NED`) | **Deferred → Week 6** | Nil impact today (no tools/output rendering); a canary for output handling |
+| RR-W3-1 | Payload splitting steers exact output (`PW`+`NED`) | **Closed** (wk6) | The predicted impact arrived with rendered output and was defanged: split-URL assembly broke 10/10 pre-defense, 0/10 post (see v1.2 delta). Canary stays in the eval suite |
 | RR-W3-2 | Over-strict leak gate scored refusals as leaks | **Fixed** (wk3) | Rewritten to coverage measure; re-scored |
 | RR-W3-3 | Instruction-leak resistance is behavioral, not structural | **Accepted limit** | Prompt holds no secrets by design; a secret prompt would need a different architecture |
+| RR-006 | Document-hosted URLs are allowlist-legal: a forged page's phishing link renders clickable, attributed but live (10/10) | **Open, accepted for now** | Content-trust problem, not an output-channel one; candidate controls (URL reputation, sensitivity-scoped link policy) weighed at v0.8. See v1.2 delta |
 
 No finding is un-triaged. The two "open, accepted" redaction residuals are genuine
 and stated plainly rather than closed with a false fix.
@@ -227,3 +228,52 @@ answer from them. New surface and controls:
   refuse; it is RAG trusting retrieved content by design (OWASP **LLM04** data/model
   poisoning, **LLM05** improper output handling). Provenance/trust labels and
   output-side defenses land in Week 6. This is an open finding as of v1.1.
+
+### v1.2 — Week 6 (2026-09-21): indirect injection defenses + output handling
+
+Closes the v1.1 open finding (content poisoning via retrieved documents) as far
+as architecture can, and adds the output-side control the roadmap scheduled here
+because the year's most-cited LLM CVE (EchoLeak, CVE-2025-32711) exfiltrated
+through the *output*, not the input.
+
+- **Context provenance (new, controlled).** Every element entering prompt
+  construction carries a server-assigned trust tier — `SYSTEM` (the versioned
+  template registry), `USER` (the authenticated conversation), `RETRIEVED`
+  (documents) — assigned in `provenance.py`/`routes_chat.py` from the database,
+  never from content. Retrieved chunks enter the prompt only inside per-request
+  nonce fences whose delimiter syntax is unrepresentable within fenced content
+  (`neutralize()`), so a document can neither know nor forge the boundary.
+  Sensitivity labels (0005) now propagate into the prompt and the audit record.
+  Structural suite: `test_provenance.py`, no model in the loop. Maps to OWASP
+  **LLM01**; NIST Manage; ATLAS LLM Prompt Injection.
+- **Output handling (new, controlled).** Model output is sanitized server-side
+  before it is stored or returned (`output_handling.py`): images never survive;
+  a link stays clickable only if its exact URL appears verbatim in the chunks
+  retrieved for that request, so a surviving link cannot carry information the
+  org's documents did not already contain; everything else is de-fanged to
+  visible inert text; non-http(s) schemes never survive. The web client renders
+  assistant markdown through a hardened component that independently refuses
+  images and raw HTML. Maps to OWASP **LLM05** (improper output handling).
+- **Audit lineage completed (new).** `model_calls` now records the trust tier of
+  every context element (`context_provenance`) and every sanitizer decision
+  (`output_handling`) — allowed, de-fanged, and blocked URLs. A stripped
+  exfiltration link is a *detection signal*, and it is now on the record; the
+  "answerable question" test (can the audit row alone reconstruct which chunk
+  carried the payload and what left the system?) is asserted in
+  `test_output_handling.py`.
+- **Measured (10 runs per attack, artifact-anchored detector).** Full corpus and
+  transcripts in `evidence/week6/`. Constructed-URL exfiltration: canary in an
+  outbound URL 8/10 pre-defense → **0/10 post**. Payload splitting across
+  documents: 10/10 → 0/10 (closes RR-W3-1's predicted impact). Image-beacon
+  relay: 8/10 → 1/10, and the survivor is a text link to a document-hosted URL,
+  not an image. Promptfoo: indirect corpus 12/12, direct regression 20/20.
+- **New residual RR-006 (open, stated).** The provenance allowlist grants what a
+  document *literally contains*, so a forged document's own phishing link still
+  renders clickable (10/10), attributed to its source by the chat-v4 framing but
+  live. This is a content-trust problem — whether the document is honest — and
+  is out of reach of output policy short of de-fanging every link, which would
+  also break every legitimate citation. Candidate controls (URL reputation,
+  sensitivity-scoped link policy, admin-curated domains) will be weighed at the
+  v0.8 milestone. The delimiter-and-framing defense on the input side remains
+  probabilistic, not absolute, per field consensus; the structural guarantees
+  (fences, allowlist, image ban) are the parts proven without the model.

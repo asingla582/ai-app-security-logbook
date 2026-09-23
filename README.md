@@ -98,8 +98,31 @@ an honest maturity self-assessment) and summarized in a [system card](security/s
 Local setup now works from a fresh clone: `make up` starts Supabase, fills `.env`,
 builds the API venv, seeds demo tenants, and runs the app.
 
-Next: Phase 2 opens with Week 5 (secure RAG) — retrieval authorized by the database,
-not the model, with provenance recorded in the audit log.
+**Week 5 shipped — Secure RAG.** Document upload with sensitivity labels at ingest,
+chunking + pgvector embeddings, and retrieval authorized by the database before the
+model sees anything — RLS plus an explicit org filter, proven with no model in the
+loop including a crafted-vector probe. Every model call records which documents fed
+it (data lineage in the audit log). Attacked live both ways: cross-tenant retrieval
+held; indirect content poisoning broke cleanly (a forged help page's phishing link,
+relayed with a citation), recorded as the open finding that owns Week 6. See
+[`evidence/week5/`](evidence/week5/).
+
+**Week 6 shipped — Indirect Injection & Output Handling.** Every piece of context
+now carries a server-assigned trust tier (SYSTEM / USER / RETRIEVED); retrieved text
+enters the prompt only inside per-request nonce fences a document can neither know
+nor forge. On the way out — the EchoLeak lesson — model output is sanitized before
+storage: images never survive, and a link stays clickable only if its exact URL
+already appears in the retrieved sources, with every verdict recorded in the audit
+log. Measured over 10 runs per attack: constructed-URL exfiltration (canary in an
+outbound URL) went 8/10 → 0/10, payload splitting 10/10 → 0/10; the honest residual
+(a document's own phishing link is allowlist-legal and still renders, 10/10) is
+RR-006 in the threat model. A third eval-scorer bug was caught and the detector
+rule codified: score what a renderer would activate, not what words appear. See
+[`evidence/week6/`](evidence/week6/).
+
+Next: Week 7 (secure tool calling) — a small tool registry with application-side
+authorization per call, input validation, execution logging, and rate limits; tool
+output enters prompts under the same provenance labels.
 
 ## Security
 
