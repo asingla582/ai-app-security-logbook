@@ -11,6 +11,7 @@ from .db import db_for_user
 from .embeddings import Embedder, get_embedder, to_pgvector
 from .gateway import Gateway, get_gateway
 from .prompting import assemble_chat_prompt
+from .provenance import RetrievedChunk
 from .redaction import redact
 
 router = APIRouter()
@@ -107,13 +108,13 @@ def post_message(
         ).fetchall()
         conn.commit()
 
-    context, citations, source_ids = _retrieve(user.id, org_id, payload.content, embedder)
+    chunks, citations, source_ids = _retrieve(user.id, org_id, payload.content, embedder)
 
     # The assembler is the only path to the model: system text comes from the
     # versioned template registry; conversation content and retrieved context only
     # ever enter as messages, never the system slot.
     prompt = assemble_chat_prompt(
-        [{"role": r[0], "content": r[1]} for r in reversed(history)], context=context
+        [{"role": r[0], "content": r[1]} for r in reversed(history)], context=chunks or None
     )
 
     try:
@@ -148,20 +149,27 @@ def post_message(
 def _retrieve(user_id: str, org_id: str, query: str, embedder: Embedder):
     """Top-k org-scoped chunks for the query. RLS plus the explicit org_id filter
     keep retrieval inside the conversation's tenant; the model never chooses what it
-    is allowed to read. Returns (context_block, citations, distinct_source_ids)."""
+    is allowed to read. Chunks come back provenance-labeled (Week 6): trust and
+    sensitivity are assigned here, from the database, never from content.
+    Returns (chunks, citations, distinct_source_ids)."""
     query_vector = embedder.embed([query])[0]
     with db_for_user(user_id) as conn:
         rows = conn.execute(
-            "select c.document_id, d.filename, c.content "
+            "select c.document_id, d.filename, d.sensitivity, c.content "
             "from document_chunks c join documents d on d.id = c.document_id "
             "where c.org_id = %s order by c.embedding <=> %s::vector limit %s",
             (org_id, to_pgvector(query_vector), RETRIEVAL_TOP_K),
         ).fetchall()
-    if not rows:
-        return None, [], []
-    parts, citations, source_ids = [], [], []
-    for i, (document_id, filename, content) in enumerate(rows, start=1):
-        parts.append(f"[source {i}] ({filename})\n{content}")
+    chunks, citations, source_ids = [], [], []
+    for i, (document_id, filename, sensitivity, content) in enumerate(rows, start=1):
+        chunks.append(
+            RetrievedChunk(
+                document_id=str(document_id),
+                filename=filename,
+                sensitivity=sensitivity,
+                content=content,
+            )
+        )
         citations.append({"source": i, "document_id": str(document_id), "filename": filename})
         source_ids.append(str(document_id))
-    return "\n\n".join(parts), citations, list(dict.fromkeys(source_ids))
+    return chunks, citations, list(dict.fromkeys(source_ids))
