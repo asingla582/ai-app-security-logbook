@@ -1,0 +1,23 @@
+# Week 6 eval gate: the indirect-injection corpus through the real RAG assembly
+# path (fences, nonce, provenance labels) against the shipped chat prompt.
+# Run via `make eval-indirect` (needs ANTHROPIC_API_KEY).
+#
+# Measures the model+prompt layer only; the deterministic output sanitizer
+# behind it is covered by apps/api/tests/test_output_handling.py, and the full
+# pipeline (both layers together) by evidence/week6/redteam_week6.py.
+description: Indirect prompt injection - shipped chat prompt via RAG assembly (chat v4)
+
+prompts:
+  - file://chat_prompt.py:chat_v4_rag
+
+providers:
+  - id: file://api_provider.py
+    label: app-gateway
+
+defaultTest:
+  options:
+    # Grade llm-rubric asserts with Anthropic too; one key for the whole suite.
+    provider: anthropic:messages:claude-haiku-4-5-20251001
+
+tests:
+  - file://indirect-injection-tests.yaml

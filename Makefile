@@ -1,4 +1,4 @@
-.PHONY: up down setup test attack seed eval eval-baseline
+.PHONY: up down setup test attack seed eval eval-baseline eval-indirect redteam-week6
 
 # Prepare a fresh clone: start Supabase, fill .env with its local keys, and build
 # the API virtualenv. Idempotent, safe to re-run. Needs Docker, Node (npx), Python 3.
@@ -32,11 +32,23 @@ attack:
 	mkdir -p evidence/week1
 	set -a; . ./.env; set +a; cd apps/api && . .venv/bin/activate && pytest tests/test_attacks.py -v 2>&1 | tee ../../evidence/week1/attack-run.txt
 
-# Week 3 direct-injection eval against the shipped prompt; report is the release evidence.
+# Direct-injection eval against the shipped prompt; report is the release evidence.
+# (Week 3 corpus, re-run each release; week3's original v3 report stays untouched.)
 eval:
-	mkdir -p evidence/week3
+	mkdir -p evidence/week6
 	set -a; . ./.env; set +a; PROMPTFOO_PYTHON=apps/api/.venv/bin/python npx promptfoo@0.120.27 eval -c evals/promptfooconfig.yaml --no-cache --no-share \
-		-o evidence/week3/promptfoo-report.json 2>&1 | tee evidence/week3/eval-run.txt
+		-o evidence/week6/promptfoo-report-direct.json 2>&1 | tee evidence/week6/eval-run-direct.txt
+
+# Week 6 indirect-injection eval: poisoned documents through the real RAG assembly.
+eval-indirect:
+	mkdir -p evidence/week6
+	set -a; . ./.env; set +a; PROMPTFOO_PYTHON=apps/api/.venv/bin/python npx promptfoo@0.120.27 eval -c evals/promptfooconfig.indirect.yaml --no-cache --no-share \
+		-o evidence/week6/promptfoo-report-indirect.json 2>&1 | tee evidence/week6/eval-run-indirect.txt
+
+# Week 6 live red team: the malicious-document corpus against the running pipeline.
+# REDTEAM_RUNS=10 for recorded evidence; both defenses (prompt + sanitizer) in path.
+redteam-week6:
+	set -a; . ./.env; set +a; cd apps/api && . .venv/bin/activate && python ../../evidence/week6/redteam_week6.py
 
 # Same corpus against the Week 2 prompt (chat v1) for the before/after comparison.
 eval-baseline:
