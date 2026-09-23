@@ -10,6 +10,7 @@ from .config import CHAT_MODEL, HISTORY_WINDOW, MAX_INPUT_CHARS, RETRIEVAL_TOP_K
 from .db import db_for_user
 from .embeddings import Embedder, get_embedder, to_pgvector
 from .gateway import Gateway, get_gateway
+from .output_handling import allowed_urls_from_chunks, sanitize_output
 from .prompting import assemble_chat_prompt
 from .provenance import RetrievedChunk
 from .redaction import redact
@@ -123,27 +124,35 @@ def post_message(
         # Error path redacts too: no raw content reaches the audit or the response.
         with db_for_user(user.id) as conn:
             conn.execute(
-                "select record_model_call(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)",
+                "select record_model_call(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, "
+                "%s::jsonb, %s::jsonb)",
                 (cid, org_id, conversation_id, CHAT_MODEL, prompt.template.ref,
-                 redact(payload.content), "[model error]", 0, 0, json.dumps(source_ids)),
+                 redact(payload.content), "[model error]", 0, 0, json.dumps(source_ids),
+                 json.dumps(prompt.provenance), "{}"),
             )
             conn.commit()
         raise HTTPException(status_code=502, detail="the assistant is unavailable") from None
 
+    # Output side (Week 6): the reply is sanitized before it is stored or sent, so
+    # no client ever holds an unsanitized assistant message. What the sanitizer did
+    # goes on the audit record: a stripped exfil link is a detection, not just a block.
+    safe = sanitize_output(reply.text, allowed_urls_from_chunks(chunks))
+
     with db_for_user(user.id) as conn:
         conn.execute(
             "insert into messages (conversation_id, role, content) values (%s, 'assistant', %s)",
-            (conversation_id, reply.text),
+            (conversation_id, safe.text),
         )
         conn.execute(
-            "select record_model_call(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)",
+            "select record_model_call(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, "
+            "%s::jsonb, %s::jsonb)",
             (cid, org_id, conversation_id, CHAT_MODEL, prompt.template.ref,
-             redact(payload.content), redact(reply.text), reply.input_tokens, reply.output_tokens,
-             json.dumps(source_ids)),
+             redact(payload.content), redact(safe.text), reply.input_tokens, reply.output_tokens,
+             json.dumps(source_ids), json.dumps(prompt.provenance), json.dumps(safe.actions)),
         )
         conn.commit()
 
-    return {"reply": reply.text, "sources": citations}
+    return {"reply": safe.text, "sources": citations}
 
 
 def _retrieve(user_id: str, org_id: str, query: str, embedder: Embedder):
