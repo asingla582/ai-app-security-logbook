@@ -110,3 +110,14 @@ REGISTRY: dict[str, ToolSpec] = {
         execute=_execute_create_note,
     ),
 }
+
+
+# Defense-in-depth against future drift: the confused-deputy protection relies on
+# every tool's args model forbidding extra fields, so a model-injected org_id or
+# user_id is rejected at validation. Enforce it at import so a new tool that forgets
+# extra="forbid" fails loudly here rather than silently accepting tenant injection.
+for _spec in REGISTRY.values():
+    if _spec.args_model.model_config.get("extra") != "forbid":
+        raise RuntimeError(
+            f"tool {_spec.name!r}: args model must set model_config extra='forbid'"
+        )
