@@ -94,18 +94,23 @@ class FakeGateway:
         self._script = list(script or [])
 
     def complete(self, system: str, messages: list[Message]) -> Reply:
-        if self._script:
-            return self._script.pop(0)
+        # getattr guard: subclasses in tests may override __init__ without a script.
+        script = getattr(self, "_script", None)
+        if script:
+            return script.pop(0)
         last_user = messages[-1]["content"] if messages else ""
         return Reply(text=f"Echo: {last_user}", input_tokens=0, output_tokens=0)
 
     def propose(
         self, system: str, messages: list[Message], tools: list[dict]
     ) -> "ToolProposal | Reply":
-        if self._script:
-            return self._script.pop(0)
-        last_user = messages[-1]["content"] if messages else ""
-        return Reply(text=f"Echo: {last_user}", input_tokens=0, output_tokens=0)
+        script = getattr(self, "_script", None)
+        if script:
+            return script.pop(0)
+        # No script and no tool intent: behave like a direct answer. Delegating to
+        # complete() means a test gateway that overrides only complete() still has its
+        # crafted reply returned through the propose-first path.
+        return self.complete(system, messages)
 
 
 def get_gateway() -> Gateway:

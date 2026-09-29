@@ -12,7 +12,6 @@ guarantees hold even on the model's worst day. Policy under test:
   just a block.
 """
 
-import json
 import os
 
 import psycopg
@@ -26,7 +25,9 @@ DOC_URL = "https://sso.company-portal.example/reset"
 
 
 def _chunk(content):
-    return RetrievedChunk(document_id="d-1", filename="doc.md", sensitivity="internal", content=content)
+    return RetrievedChunk(
+        document_id="d-1", filename="doc.md", sensitivity="internal", content=content
+    )
 
 
 def test_image_is_always_removed_even_if_url_is_in_sources():

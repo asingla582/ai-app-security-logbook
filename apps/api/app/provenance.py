@@ -10,10 +10,10 @@ call states what trust tier each context element carried.
 """
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class Trust(str, Enum):
+class Trust(StrEnum):
     SYSTEM = "system"  # application-authored: the versioned template registry
     USER = "user"  # the authenticated end-user's own conversation
     RETRIEVED = "retrieved"  # documents and anything else fetched on the user's behalf

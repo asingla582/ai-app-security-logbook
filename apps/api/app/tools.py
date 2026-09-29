@@ -45,7 +45,10 @@ class ToolSpec:
     description: str
     args_model: type[BaseModel]
     authorize: Callable      # (ctx: ToolContext, correlation_id, args) -> None; raises to deny
-    execute: Callable        # (ctx: ToolContext, args) -> ToolResult
+    # execute(ctx, args) -> ToolResult. Runs on ctx.conn (the caller's RLS-scoped
+    # connection). An executor that writes must commit its own work; the pipeline's
+    # trajectory finalize runs on the same connection afterward.
+    execute: Callable
 
 
 def validate_args(spec: ToolSpec, raw: dict) -> BaseModel:

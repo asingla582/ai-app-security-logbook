@@ -10,10 +10,12 @@ from .config import CHAT_MODEL, HISTORY_WINDOW, MAX_INPUT_CHARS
 from .db import db_for_user
 from .embeddings import Embedder, get_embedder
 from .gateway import Gateway, get_gateway
+from .limits import RateLimited, check_org_model_budget
 from .output_handling import allowed_urls_from_chunks, sanitize_output
 from .prompting import assemble_chat_prompt
 from .redaction import redact
 from .retrieval import retrieve_chunks
+from .tool_exec import run_tool_turn
 
 router = APIRouter()
 
@@ -109,17 +111,32 @@ def post_message(
         ).fetchall()
         conn.commit()
 
+    # Denial-of-wallet ceiling (Week 7): refuse before the first model call of the
+    # turn if the org has spent its daily model-call budget.
+    with db_for_user(user.id) as conn:
+        try:
+            check_org_model_budget(conn, org_id)
+        except RateLimited as limit:
+            raise HTTPException(status_code=429, detail=limit.retry_hint) from None
+
     chunks, citations, source_ids = _retrieve(user.id, org_id, payload.content, embedder)
 
     # The assembler is the only path to the model: system text comes from the
     # versioned template registry; conversation content and retrieved context only
     # ever enter as messages, never the system slot.
-    prompt = assemble_chat_prompt(
-        [{"role": r[0], "content": r[1]} for r in reversed(history)], context=chunks or None
-    )
+    history_msgs = [{"role": r[0], "content": r[1]} for r in reversed(history)]
+    prompt = assemble_chat_prompt(history_msgs, context=chunks or None)
 
     try:
-        reply = gateway.complete(prompt.template.system, prompt.messages)
+        # The turn may take a single tool action; the model proposes, the app
+        # authorizes/validates/executes and records the trajectory. The final answer
+        # always comes from a completion with no tools offered (single-step).
+        outcome = run_tool_turn(
+            gateway, embedder, user, org_id, conversation_id, cid, history_msgs, chunks, prompt
+        )
+    except RateLimited as limit:
+        # A per-user tool-rate rejection; the tool_calls row already records it.
+        raise HTTPException(status_code=429, detail=limit.retry_hint) from None
     except anthropic.APIError:
         # Error path redacts too: no raw content reaches the audit or the response.
         with db_for_user(user.id) as conn:
@@ -133,10 +150,10 @@ def post_message(
             conn.commit()
         raise HTTPException(status_code=502, detail="the assistant is unavailable") from None
 
-    # Output side (Week 6): the reply is sanitized before it is stored or sent, so
-    # no client ever holds an unsanitized assistant message. What the sanitizer did
-    # goes on the audit record: a stripped exfil link is a detection, not just a block.
-    safe = sanitize_output(reply.text, allowed_urls_from_chunks(chunks))
+    # Output side (Week 6): the reply is sanitized before it is stored or sent, so no
+    # client ever holds an unsanitized assistant message. The allowlist is built from
+    # every chunk the final answer saw, including any produced by a tool this turn.
+    safe = sanitize_output(outcome.reply_text, allowed_urls_from_chunks(outcome.final_chunks))
 
     with db_for_user(user.id) as conn:
         conn.execute(
@@ -147,12 +164,13 @@ def post_message(
             "select record_model_call(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, "
             "%s::jsonb, %s::jsonb)",
             (cid, org_id, conversation_id, CHAT_MODEL, prompt.template.ref,
-             redact(payload.content), redact(safe.text), reply.input_tokens, reply.output_tokens,
-             json.dumps(source_ids), json.dumps(prompt.provenance), json.dumps(safe.actions)),
+             redact(payload.content), redact(safe.text), outcome.input_tokens,
+             outcome.output_tokens, json.dumps(source_ids),
+             json.dumps(outcome.provenance), json.dumps(safe.actions)),
         )
         conn.commit()
 
-    return {"reply": safe.text, "sources": citations}
+    return {"reply": safe.text, "sources": citations, "tool_used": outcome.tool_used}
 
 
 def _retrieve(user_id: str, org_id: str, query: str, embedder: Embedder):
