@@ -5,8 +5,16 @@ require_supabase-backed tests prove the real DB effects (a note lands in the
 caller's org, the trajectory is recorded); the pure-unit test proves single-step.
 """
 
+import os
+
+import psycopg
+
 from app.gateway import FakeGateway, Reply, ToolProposal, get_gateway
 from app.main import app
+
+_DB_URL = os.environ.get(
+    "SUPABASE_DB_URL", "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+)
 
 
 def _script_gateway(script):
@@ -57,6 +65,30 @@ def test_note_created_by_tool_is_visible_to_the_caller(alice_client):
         assert "ToolMade" in titles
     finally:
         _clear_gateway()
+
+
+def test_executed_tool_call_trajectory_is_finalized(alice_client):
+    # Regression for the mid-turn commit seam: the identity context must survive the
+    # commit inside record_tool_proposal, or finalize_tool_call (which filters on
+    # user_id = auth.uid()) updates zero rows and the trajectory dangles at 'proposed'.
+    _script_gateway(
+        [ToolProposal("create_note", {"title": "Trace", "body": "b"}, 0, 0), Reply("ok", 0, 0)]
+    )
+    try:
+        alice_client.post("/orgs", json={"name": "A"})
+        conv = alice_client.post("/conversations").json()["id"]
+        alice_client.post(f"/conversations/{conv}/messages", json={"content": "save Trace"})
+    finally:
+        _clear_gateway()
+    # Inspect the audit row as the DB owner (end users cannot read tool_calls).
+    with psycopg.connect(_DB_URL) as conn:
+        rows = conn.execute(
+            "select status from tool_calls where tool_name = 'create_note' "
+            "and conversation_id = %s",
+            (conv,),
+        ).fetchall()
+    assert rows, "a tool_calls row should exist for the create_note turn"
+    assert all(r[0] == "executed" for r in rows), f"trajectory not finalized: {rows}"
 
 
 def test_unknown_tool_falls_back_to_plain_reply(alice_client):

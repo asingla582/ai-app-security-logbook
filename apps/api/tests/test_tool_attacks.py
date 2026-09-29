@@ -94,6 +94,31 @@ def test_per_user_tool_rate_limit_returns_429(alice_client, monkeypatch):
         _restore_gateway()
 
 
+def test_user_tool_rate_engages_via_real_count(alice_client, monkeypatch):
+    # Regression for the mid-turn commit seam: check_user_tool_rate counts tool_calls
+    # via count_user_tool_calls_1m() (anchored to auth.uid()). If the identity context
+    # is lost after record_tool_proposal's commit, the count is always zero and the cap
+    # never engages. Each scripted turn proposes create_note, so each records a row.
+    import app.limits as limits
+
+    monkeypatch.setattr(limits, "TOOL_CALLS_PER_USER_PER_MINUTE", 2)
+    _script_gateway(
+        [ToolProposal("create_note", {"title": "n", "body": ""}, 0, 0), Reply("ok", 0, 0)]
+    )
+    try:
+        _alice_org(alice_client)
+        conv = alice_client.post("/conversations").json()["id"]
+        codes = [
+            alice_client.post(
+                f"/conversations/{conv}/messages", json={"content": f"save {i}"}
+            ).status_code
+            for i in range(3)
+        ]
+        assert 429 in codes  # the real per-user tool-rate count engages
+    finally:
+        _restore_gateway()
+
+
 def test_org_model_budget_ceiling_returns_429(alice_client, monkeypatch):
     # No scripted gateway: the budget check fires before any model call, so the
     # gateway is never reached.
