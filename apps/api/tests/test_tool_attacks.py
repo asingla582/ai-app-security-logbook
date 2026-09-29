@@ -105,3 +105,23 @@ def test_org_model_budget_ceiling_returns_429(alice_client, monkeypatch):
     conv = alice_client.post("/conversations").json()["id"]
     r = alice_client.post(f"/conversations/{conv}/messages", json={"content": "hello"})
     assert r.status_code == 429
+
+
+def test_org_model_budget_engages_via_real_count(alice_client, monkeypatch):
+    # Regression for the bug the live red team caught: the budget count must read the
+    # audit tables through the SECURITY DEFINER function, not a plain query on the
+    # caller's connection (which sees zero rows under RLS). Here we exercise the REAL
+    # count path (only the threshold is lowered) and require the ceiling to engage.
+    import app.limits as limits
+
+    monkeypatch.setattr(limits, "MODEL_CALLS_PER_ORG_PER_DAY", 2)
+    _alice_org(alice_client)
+    conv = alice_client.post("/conversations").json()["id"]
+    codes = [
+        alice_client.post(
+            f"/conversations/{conv}/messages", json={"content": f"hi {i}"}
+        ).status_code
+        for i in range(4)
+    ]
+    # First two succeed and record model_calls; the real count then trips the ceiling.
+    assert 429 in codes
