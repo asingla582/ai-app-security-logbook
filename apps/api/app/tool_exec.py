@@ -1,0 +1,199 @@
+"""Week 7: the tool turn. Proposal in, authorized-and-executed action or plain
+reply out. The model proposes; the app disposes — rate limit, validate, authorize,
+execute as the caller under a timeout, then answer from a fresh assembly with the
+result as RETRIEVED context (single-step: the second call carries no tools).
+"""
+
+import json
+from dataclasses import dataclass, field
+
+from fastapi import HTTPException
+from pydantic import ValidationError
+
+from .config import TOOL_TIMEOUT_SECONDS
+from .db import db_for_user
+from .gateway import Reply
+from .limits import RateLimited, check_user_tool_rate
+from .prompting import assemble_chat_prompt
+from .provenance import RetrievedChunk
+from .redaction import redact
+from .retrieval import retrieve_chunks
+from .tools import REGISTRY, ToolContext, ToolResult, ToolSpec, anthropic_tools, validate_args
+
+
+@dataclass
+class _Decision:
+    status: str
+    spec: ToolSpec | None = None
+    args: object | None = None
+
+
+@dataclass
+class TurnOutcome:
+    reply_text: str
+    tool_used: dict | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
+    # The chunks and provenance the FINAL model call saw, so the route can build the
+    # sanitizer allowlist and the audit provenance from exactly what produced the reply.
+    final_chunks: list = field(default_factory=list)
+    provenance: list = field(default_factory=list)
+
+
+def _decide_tool(proposal) -> _Decision:
+    """Map a raw model proposal to a decision. An unknown tool name or arguments
+    that fail validation are 'invalid' — recorded, then the turn falls back to a
+    plain answer. Neither crashes the pipeline."""
+    spec = REGISTRY.get(proposal.name)
+    if spec is None:
+        return _Decision("invalid")
+    try:
+        args = validate_args(spec, proposal.raw_args)
+    except ValidationError:
+        return _Decision("invalid")
+    return _Decision("proposed", spec=spec, args=args)
+
+
+def search_documents_exec(ctx, args) -> ToolResult:
+    # Same query as chat retrieval, on the caller's connection; the model never
+    # picked the org — ctx.org_id is the conversation's tenant. The embedder is the
+    # injected one (FakeEmbedder under test), never a global.
+    chunks = retrieve_chunks(ctx.conn, ctx.org_id, args.query, ctx.embedder)
+    summary = f"searched documents for {args.query!r}: {len(chunks)} passage(s)"
+    return ToolResult(content=summary, summary=summary, chunks=chunks)
+
+
+def create_note_exec(ctx, args) -> ToolResult:
+    note = ctx.conn.execute(
+        "insert into notes (org_id, title, body, created_by) values (%s, %s, %s, %s) "
+        "returning id",
+        (ctx.org_id, args.title, args.body, ctx.user.id),
+    ).fetchone()
+    ctx.conn.commit()
+    # returning id only (not the body, unlike routes_notes.create_note): the tool
+    # result feeds back into the model, so the confirmation deliberately carries no
+    # note content — just an id and title acknowledgement.
+    summary = f"created note {note[0]} titled {args.title!r}"
+    chunk = RetrievedChunk(
+        document_id=str(note[0]),
+        filename="note-confirmation",
+        sensitivity="internal",
+        content=summary,
+    )
+    return ToolResult(content=summary, summary=summary, chunks=[chunk])
+
+
+def _record_proposal(conn, correlation_id, org_id, conversation_id, name, raw_args, status):
+    row = conn.execute(
+        "select record_tool_proposal(%s, %s, %s, %s, %s::jsonb, %s)",
+        (correlation_id, org_id, conversation_id, name, redact(json.dumps(raw_args)), status),
+    ).fetchone()
+    conn.commit()
+    return row[0]
+
+
+def _finalize(conn, proposal_id, status, summary, executed):
+    conn.execute(
+        "select finalize_tool_call(%s, %s, %s, %s)",
+        (proposal_id, status, summary, executed),
+    )
+    conn.commit()
+
+
+def _execute_with_timeout(conn, spec, ctx, args) -> ToolResult:
+    # Bound the tool's DB work with a per-transaction statement timeout (Ruling 4):
+    # this cancels a runaway query with a single connection owner, unlike a worker
+    # thread that would share this connection with the timed-out call. Network calls
+    # inside a tool (e.g. the embedder) are not bound by this, matching the existing
+    # retrieval path.
+    conn.execute(
+        "select set_config('statement_timeout', %s, true)",
+        (str(int(TOOL_TIMEOUT_SECONDS * 1000)),),
+    )
+    return spec.execute(ctx, args)
+
+
+def run_tool_turn(
+    gateway,
+    embedder,
+    user,
+    org_id,
+    conversation_id,
+    correlation_id,
+    history,
+    retrieval_chunks,
+    prompt,
+):
+    """One chat turn that may take a single tool action. The model proposes; the app
+    authorizes, validates, executes as the caller under a timeout, and records the
+    proposed -> decided -> executed trajectory. The final answer always comes from a
+    completion with NO tools offered, so the turn cannot chain (single-step).
+
+    The route assembles and passes the first-leg `prompt` (so it owns the error-path
+    audit record) plus the `retrieval_chunks` behind it and the `history` needed to
+    reassemble the second leg with the tool result appended."""
+    first = gateway.propose(prompt.template.system, prompt.messages, anthropic_tools())
+    if isinstance(first, Reply):
+        return TurnOutcome(
+            reply_text=first.text,
+            tool_used=None,
+            input_tokens=first.input_tokens,
+            output_tokens=first.output_tokens,
+            final_chunks=retrieval_chunks,
+            provenance=prompt.provenance,
+        )
+
+    decision = _decide_tool(first)
+    result = None
+    with db_for_user(user.id) as conn:
+        proposal_id = _record_proposal(
+            conn, correlation_id, org_id, conversation_id, first.name,
+            first.raw_args, decision.status,
+        )
+        if decision.status == "invalid":
+            _finalize(conn, proposal_id, "invalid", "unknown tool or invalid arguments", False)
+        else:
+            ctx = ToolContext(conn=conn, user=user, org_id=org_id, embedder=embedder)
+            try:
+                check_user_tool_rate(conn, user.id)
+            except RateLimited:
+                _finalize(conn, proposal_id, "rate_limited", "per-user tool rate exceeded", False)
+                raise
+            try:
+                decision.spec.authorize(ctx, correlation_id, decision.args)
+            except HTTPException:
+                _finalize(conn, proposal_id, "denied", "authorization denied", False)
+                raise
+            try:
+                result = _execute_with_timeout(conn, decision.spec, ctx, decision.args)
+            except Exception:
+                conn.rollback()  # a timed-out/failed statement aborts the tx
+                _finalize(conn, proposal_id, "failed", "execution failed or timed out", False)
+                result = None
+            else:
+                _finalize(conn, proposal_id, "executed", redact(result.summary), True)
+
+    # Second leg, outside the tool connection: NO tools offered, so no chaining.
+    if result is None:
+        # invalid or failed proposal: answer plainly from retrieval only.
+        reply = gateway.complete(prompt.template.system, prompt.messages)
+        return TurnOutcome(
+            reply_text=reply.text,
+            tool_used=None,
+            input_tokens=first.input_tokens + reply.input_tokens,
+            output_tokens=first.output_tokens + reply.output_tokens,
+            final_chunks=retrieval_chunks,
+            provenance=prompt.provenance,
+        )
+
+    final_chunks = list(retrieval_chunks) + list(result.chunks)
+    prompt2 = assemble_chat_prompt(history, context=final_chunks or None)
+    reply = gateway.complete(prompt2.template.system, prompt2.messages)
+    return TurnOutcome(
+        reply_text=reply.text,
+        tool_used={"name": decision.spec.name, "summary": result.summary},
+        input_tokens=first.input_tokens + reply.input_tokens,
+        output_tokens=first.output_tokens + reply.output_tokens,
+        final_chunks=final_chunks,
+        provenance=prompt2.provenance,
+    )

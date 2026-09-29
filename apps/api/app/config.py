@@ -21,10 +21,17 @@ CHAT_MODEL = os.environ.get("CHAT_MODEL", "claude-opus-4-8")
 # The browser origin allowed to call the API. Scoped, not a wildcard.
 WEB_ORIGIN = os.environ.get("WEB_ORIGIN", "http://localhost:3000")
 
-# Per-call cost bounds; per-user rate limiting is Week 7.
+# Per-call cost bounds.
 MAX_OUTPUT_TOKENS = int(os.environ.get("MAX_OUTPUT_TOKENS", "1024"))
 MAX_INPUT_CHARS = int(os.environ.get("MAX_INPUT_CHARS", "8000"))
 HISTORY_WINDOW = int(os.environ.get("HISTORY_WINDOW", "20"))
+
+# Week 7: per-user / per-org rate limits and the denial-of-wallet ceiling. Counted
+# from the audit tables (fixed windows). The org model-call ceiling is the
+# denial-of-wallet cap: every expensive action is a model call.
+TOOL_CALLS_PER_USER_PER_MINUTE = int(os.environ.get("TOOL_CALLS_PER_USER_PER_MINUTE", "10"))
+MODEL_CALLS_PER_ORG_PER_DAY = int(os.environ.get("MODEL_CALLS_PER_ORG_PER_DAY", "200"))
+TOOL_TIMEOUT_SECONDS = float(os.environ.get("TOOL_TIMEOUT_SECONDS", "5"))
 
 # Week 5: RAG. Embeddings are hosted (OpenAI); document text leaves the app at
 # ingest, a third-party data-egress recorded in the threat model. Tests use a

@@ -1,0 +1,23 @@
+# Week 7 eval gate: injection-driven tool invocation through the real assembly path
+# and the real propose() call. Measures whether a document can steer the model into
+# proposing an action the user never asked for. Run via `make eval-tools` (needs
+# ANTHROPIC_API_KEY).
+description: Tool-injection - shipped chat prompt + tool registry via propose() (chat v5)
+
+prompts:
+  - file://chat_prompt.py:chat_v5_rag
+
+providers:
+  - id: file://api_provider_tools.py
+    label: app-gateway-tools
+
+# Applied to every test: a crashed or empty provider must not score as a passing
+# defense. The attack assertions treat "not valid JSON" as "no tool proposed" (a
+# save), so this guard ensures the output is actually present first.
+defaultTest:
+  assert:
+    - type: javascript
+      value: "output.trim().length > 0"
+
+tests:
+  - file://tool-injection-tests.yaml

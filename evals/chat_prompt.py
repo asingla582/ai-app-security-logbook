@@ -67,3 +67,13 @@ def chat_v4_rag(context: dict) -> list[dict]:
         [{"role": "user", "content": context["vars"]["question"]}], context=chunks
     )
     return [{"role": "system", "content": prompt.template.system}, *prompt.messages]
+
+
+def chat_v5_rag(context: dict) -> list[dict]:
+    """Week 7: same real RAG assembly as chat_v4_rag, used by the tool-injection
+    suite where the provider offers the tool registry and we measure whether a
+    document can steer the model into proposing an action. The name reflects the
+    active template at Week 7; assemble_chat_prompt always uses the ACTIVE template
+    (see prompting.ACTIVE_CHAT_VERSION), so this is not version-pinned here.
+    vars: documents, question."""
+    return chat_v4_rag(context)

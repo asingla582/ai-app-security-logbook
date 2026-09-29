@@ -1,6 +1,6 @@
 # Threat Model v1
 
-**Version:** 1.0, plus deltas in the Update log: v1.1 (Week 5 RAG), v1.2 (Week 6 indirect injection + output handling) · **Date:** 2026-09-06 · **Milestone:** v0.4 "Trust Foundation"
+**Version:** 1.0, plus deltas in the Update log: v1.1 (Week 5 RAG), v1.2 (Week 6 indirect injection + output handling), v1.3 (Week 7 secure tool calling) · **Date:** 2026-09-29 · **Milestone:** v0.4 "Trust Foundation" → v0.7
 **Refresh cadence:** revised at each milestone (next at v0.8, then v1.0). A threat
 model is evidence, and evidence goes stale; treat anything here as true only as of
 the date above and the commit it ships with.
@@ -121,11 +121,34 @@ not an exact technique ID.
 - **Evidence:** `apps/api/tests/test_redaction.py`, `evidence/week2/`.
 
 ### ACTIONS — tool abuse / excessive agency
-- **Threat:** injected instruction drives a tool call; confused-deputy across tenants.
-- **Status:** **not applicable yet.** The assistant has no tools and no retrieval;
-  output is only shown as text. This is why RR-W3-1 (payload splitting) has nil impact
-  today. Controls (per-call authz, input validation, rate limits) land Weeks 7-8.
-- **OWASP:** LLM06 (excessive agency), LLM10 (unbounded consumption) · **NIST:** Manage.
+- **Threat:** an injected instruction drives a tool call; a confused-deputy call acts
+  across tenants; a flood of expensive calls runs the system into the ground.
+- **Status:** **controlled as of Week 7.** The assistant has two tools —
+  `search_documents` (read) and `create_note` (write) — behind a single-step pipeline:
+  the model only *proposes* a tool (native tool-use), and the application authorizes,
+  validates, executes, and records it.
+- **Controls (structural, primary):** the model never chooses the tenant — tool
+  argument models (`tools.py`) carry no `org_id`/`user_id` and forbid extra fields, so
+  a model-supplied tenant is rejected at validation; a registry-load assertion fails
+  the app if a future tool omits `extra="forbid"`. Tools execute on the caller's
+  RLS-scoped connection (`tool_exec.py`), so a bypassed app check still meets RLS.
+  Single-step is structural: the second (answering) model call is offered no tools, so
+  the turn cannot chain. Tool results re-enter the model only through the one assembly
+  path as `RETRIEVED`-tier chunks (the Week 6 invariant), and their URLs inherit the
+  output allowlist.
+- **Controls (resource, primary):** a per-org daily model-call ceiling (the
+  denial-of-wallet cap) and a per-user tool-rate cap, counted from the audit tables via
+  `SECURITY DEFINER` functions (`limits.py`, migration 0009) and returning HTTP 429 on
+  breach. Every proposal is recorded as a `proposed → decided → executed` trajectory in
+  `tool_calls` (migration 0008), server-write-only like `model_calls`.
+- **Measurement:** `make eval-tools` (injection-driven invocation, 6/6 at the model
+  layer); `evidence/week7/` live red team (injection-driven writes held; DoW ceiling
+  engages; cross-tenant and tampering blocked deterministically in
+  `test_tool_attacks.py`).
+- **OWASP:** LLM06 (excessive agency), LLM10 (unbounded consumption) · **NIST:** Manage
+  · **ATLAS:** LLM Prompt Injection, Cost Harvesting.
+- **Residuals:** RR-W7-1 (authorized-but-steered write → Week 8), RR-W7-2 (fixed-window
+  race, accepted). See §5.
 
 ### Supply chain / model provenance
 - **Threat:** compromised dependency or a shift in the hosted model.
@@ -146,7 +169,10 @@ Every documented finding from weeks 1-3, with an honest status. "Closed" here me
 | W1-RLS | Membership policy let a user grant themselves into any org | **Fixed** (wk1) | Regression test locks it |
 | RR-W2-1 | Obfuscated PII (e.g. `x [at] y [dot] com`) slips redaction | **Open, accepted** | Architectural limit of signature matching; mitigated by data-minimization stance (§3) |
 | RR-W2-2 | Free-form secrets (e.g. a pasted password) slip redaction | **Open, accepted** | Same; no signature to match. Documented, not silently ignored |
-| DoW | Denial-of-wallet: unrestricted signup, no rate limiting | **Deferred → Week 7** | Rate limiting / resource caps |
+| DoW | Denial-of-wallet: unrestricted signup, no rate limiting | **Addressed** (wk7) | Per-org daily model-call ceiling + per-user tool-rate cap, 429 on breach (`limits.py`). The v1.3 red team caught the first implementation counting zero under RLS; fixed via SECURITY DEFINER counters (migration 0009) |
+| RR-W7-1 | Injected content can steer *what* a user-authorized `create_note` writes; the write executes with no human approval | **Open → Week 8** | Content-trust / agency gap. The app authorizes because it is the caller's own org; only a human-in-the-loop gate closes the "attacker-chosen content in an authorized action" case. `create_note` is the designated HITL tool |
+| RR-W7-2 | Fixed-window rate limits race under concurrency | **Open, accepted** | Simpler than a distributed token bucket and honest at this scale; a burst at a window edge can slightly exceed the cap |
+| RR-W7-3 | Rate-limit counts read audit tables the `authenticated` role cannot see (RLS), so `count(*)` returned 0 and limits were silent no-ops | **Fixed** (wk7) | Caught by the live red team, not the mocked unit tests. SECURITY DEFINER counting functions (migration 0009); regression test exercises the real count path |
 | RR-W3-1 | Payload splitting steers exact output (`PW`+`NED`) | **Closed** (wk6) | The predicted impact arrived with rendered output and was defanged: split-URL assembly broke 10/10 pre-defense, 0/10 post (see v1.2 delta). Canary stays in the eval suite |
 | RR-W3-2 | Over-strict leak gate scored refusals as leaks | **Fixed** (wk3) | Rewritten to coverage measure; re-scored |
 | RR-W3-3 | Instruction-leak resistance is behavioral, not structural | **Accepted limit** | Prompt holds no secrets by design; a secret prompt would need a different architecture |
@@ -277,3 +303,48 @@ through the *output*, not the input.
   v0.8 milestone. The delimiter-and-framing defense on the input side remains
   probabilistic, not absolute, per field consensus; the structural guarantees
   (fences, allowlist, image ban) are the parts proven without the model.
+
+### v1.3 — Week 7 (2026-09-29): secure tool calling
+
+Gives the assistant its first actions and answers the ACTIONS threat that had been
+"not applicable yet" since Week 3. The stance is the same as everywhere else in the
+project: the model proposes, the application decides.
+
+- **Tool registry + single-step pipeline (new, controlled).** Two tools —
+  `search_documents` (read) and `create_note` (write) — declared in `tools.py`. The
+  model proposes a tool via the native tools API; the app validates arguments
+  (Pydantic, `extra="forbid"`), authorizes, executes on the caller's RLS-scoped
+  connection, then answers from a second model call offered **no** tools, so a turn
+  cannot chain. The tool result re-enters the model only through the one assembly path
+  as a `RETRIEVED`-tier chunk (the v1.2 invariant), fenced and allowlisted like any
+  document. System prompt `chat v5` adds the tool paragraph; direct 20/20 and indirect
+  12/12 regressions hold against it. Maps to OWASP **LLM06**.
+- **Tenant is never model-chosen (structural).** Tool arguments carry no
+  `org_id`/`user_id`; org is the conversation's own tenant, identity the session. A
+  proposal naming another org is rejected at validation. Cross-tenant confused-deputy
+  is therefore impossible by construction, proven without the model in
+  `test_tool_attacks.py`.
+- **Resource caps (new, controlled).** A per-org daily model-call ceiling (the
+  denial-of-wallet cap) and a per-user tool-rate cap (`limits.py`), returning HTTP 429
+  on breach. Every proposal is recorded as a `proposed → decided → executed` trajectory
+  in `tool_calls` (migration 0008), server-write-only. Maps to OWASP **LLM10**.
+- **The break the red team caught (fixed).** The first rate-limit implementation
+  counted from `model_calls`/`tool_calls` on the caller's `authenticated` connection —
+  but those audit tables are RLS-with-no-policy, so the count was always zero and the
+  limits did nothing. The mocked unit tests missed it; the live pipeline run
+  (`evidence/week7/redteam_week7.py`) exposed it when a flood never tripped. Fixed with
+  `SECURITY DEFINER` counting functions (migration 0009) and a regression test that
+  exercises the real count. This is RR-W7-3; it is the reason a live run earns its cost
+  over a mock.
+- **Measured.** Model-layer injection-driven tool invocation: `make eval-tools` 6/6
+  (the model refuses document-ordered writes; a detector assertion that flagged a
+  codename *mentioned* in a plain reply was corrected to score the write artifact, the
+  recurring "score the deliverable, not the mention" rule). Full pipeline: injected
+  writes produced no note (`tool_calls=[]`) across runs; DoW ceiling engages after the
+  fix (201×4 then 429). Cross-tenant and parameter tampering blocked deterministically.
+- **New residual RR-W7-1 (open → Week 8).** A user-authorized `create_note` executes
+  immediately with no human approval, so injected content can still steer *what* an
+  otherwise-legitimate write records. The app authorizes it because it is genuinely the
+  caller's own org; only a human-in-the-loop gate closes the attacker-chosen-content
+  case. `create_note` is the designated HITL tool for Week 8. RR-W7-2 (fixed-window
+  race) is accepted at this scale.

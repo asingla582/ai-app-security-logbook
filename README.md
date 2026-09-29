@@ -120,9 +120,25 @@ RR-006 in the threat model. A third eval-scorer bug was caught and the detector
 rule codified: score what a renderer would activate, not what words appear. See
 [`evidence/week6/`](evidence/week6/).
 
-Next: Week 7 (secure tool calling) — a small tool registry with application-side
-authorization per call, input validation, execution logging, and rate limits; tool
-output enters prompts under the same provenance labels.
+**Week 7 shipped — Secure Tool Calling.** The assistant gained two actions,
+`search_documents` (read) and `create_note` (write), behind a single-step pipeline:
+the model only proposes a tool, and the application validates arguments, authorizes,
+executes on the caller's own connection, and records a proposed → decided → executed
+trajectory. The model never chooses the tenant (tool arguments carry no org or user
+id and forbid extras), so cross-tenant confused-deputy is impossible by construction,
+proven with no model in the loop. Tool results re-enter the model only as fenced
+RETRIEVED context, and a per-org daily model-call ceiling plus a per-user tool-rate
+cap bound denial-of-wallet. The live red team caught the rate limits counting zero
+against RLS-protected audit tables (silent no-ops) and the fix — SECURITY DEFINER
+counters — is in migration 0009/0010; the ceiling now trips under a flood. At the
+model layer, document-ordered writes were refused 6/6 and produced no note across
+runs. The honest residual: a user-authorized write still executes with no human
+approval, which is what Week 8 (human-in-the-loop) closes. See
+[`evidence/week7/`](evidence/week7/).
+
+Next: Week 8 (human approval) — an approval queue for the high-risk `create_note`
+tool, immutable approval records, and parameter locking so what was approved is
+exactly what executes.
 
 ## Security
 

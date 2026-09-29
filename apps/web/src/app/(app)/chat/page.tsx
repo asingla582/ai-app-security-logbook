@@ -6,9 +6,10 @@ import { apiFetch } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 
 import { AssistantMarkdown } from "./AssistantMarkdown";
+import { ToolIndicator, type ToolUsed } from "./ToolIndicator";
 
 type Conversation = { id: string; title: string };
-type Message = { role: string; content: string };
+type Message = { role: string; content: string; toolUsed?: ToolUsed };
 
 async function token(): Promise<string> {
   const { data } = await supabase.auth.getSession();
@@ -58,8 +59,8 @@ export default function ChatPage() {
       body: JSON.stringify({ content: text }),
     });
     if (res.ok) {
-      const { reply } = await res.json();
-      setMessages((m) => [...m, { role: "assistant", content: reply }]);
+      const { reply, tool_used } = await res.json();
+      setMessages((m) => [...m, { role: "assistant", content: reply, toolUsed: tool_used ?? null }]);
       loadConversations();
     } else {
       setMessages((m) => [...m, { role: "assistant", content: "(the assistant is unavailable)" }]);
@@ -117,6 +118,7 @@ export default function ChatPage() {
                   >
                     {m.role === "user" ? m.content : <AssistantMarkdown content={m.content} />}
                   </span>
+                  {m.role === "assistant" && <ToolIndicator toolUsed={m.toolUsed ?? null} />}
                 </div>
               ))}
               {busy && <div className="text-sm text-neutral-400">…</div>}
