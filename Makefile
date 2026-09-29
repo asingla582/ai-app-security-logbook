@@ -57,6 +57,11 @@ eval-tools:
 redteam-week6:
 	set -a; . ./.env; set +a; cd apps/api && . .venv/bin/activate && python ../../evidence/week6/redteam_week6.py
 
+# Week 7 live red team: secure tool calling against the running pipeline + DB.
+# Scores artifacts (note rows, 429s), not prose. REDTEAM_RUNS=10 for recorded evidence.
+redteam-week7:
+	set -a; . ./.env; set +a; cd apps/api && . .venv/bin/activate && python ../../evidence/week7/redteam_week7.py
+
 # Same corpus against the Week 2 prompt (chat v1) for the before/after comparison.
 eval-baseline:
 	mkdir -p evidence/week3
