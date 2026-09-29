@@ -26,6 +26,8 @@ def check_org_model_budget(conn, org_id: str) -> None:
 
 
 def check_user_tool_rate(conn, user_id: str) -> None:
-    row = conn.execute("select count_user_tool_calls_1m(%s)", (user_id,)).fetchone()
+    # The count is anchored to auth.uid() inside the function; user_id is kept in the
+    # signature for the caller's readability and is not trusted for the count.
+    row = conn.execute("select count_user_tool_calls_1m()").fetchone()
     if row[0] >= TOOL_CALLS_PER_USER_PER_MINUTE:
         raise RateLimited("user_tool_rate", "slow down and retry shortly")

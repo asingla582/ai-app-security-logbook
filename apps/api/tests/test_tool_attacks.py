@@ -124,4 +124,5 @@ def test_org_model_budget_engages_via_real_count(alice_client, monkeypatch):
         for i in range(4)
     ]
     # First two succeed and record model_calls; the real count then trips the ceiling.
-    assert 429 in codes
+    assert codes[:2] == [201, 201]
+    assert 429 in codes[2:]

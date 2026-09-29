@@ -9,7 +9,7 @@ class FakeConn:
     def __init__(self, count):
         self._count = count
 
-    def execute(self, sql, params):
+    def execute(self, sql, params=None):
         count = self._count
 
         class R:
