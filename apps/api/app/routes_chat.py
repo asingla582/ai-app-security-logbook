@@ -6,14 +6,14 @@ from pydantic import BaseModel
 
 from .auth import User, get_current_user
 from .authz import require_conversation_owner
-from .config import CHAT_MODEL, HISTORY_WINDOW, MAX_INPUT_CHARS, RETRIEVAL_TOP_K
+from .config import CHAT_MODEL, HISTORY_WINDOW, MAX_INPUT_CHARS
 from .db import db_for_user
-from .embeddings import Embedder, get_embedder, to_pgvector
+from .embeddings import Embedder, get_embedder
 from .gateway import Gateway, get_gateway
 from .output_handling import allowed_urls_from_chunks, sanitize_output
 from .prompting import assemble_chat_prompt
-from .provenance import RetrievedChunk
 from .redaction import redact
+from .retrieval import retrieve_chunks
 
 router = APIRouter()
 
@@ -156,29 +156,15 @@ def post_message(
 
 
 def _retrieve(user_id: str, org_id: str, query: str, embedder: Embedder):
-    """Top-k org-scoped chunks for the query. RLS plus the explicit org_id filter
-    keep retrieval inside the conversation's tenant; the model never chooses what it
-    is allowed to read. Chunks come back provenance-labeled (Week 6): trust and
-    sensitivity are assigned here, from the database, never from content.
+    """Chat-turn retrieval: the shared org-scoped search, plus the citation and
+    source-id bookkeeping the chat response and audit lineage need.
     Returns (chunks, citations, distinct_source_ids)."""
-    query_vector = embedder.embed([query])[0]
     with db_for_user(user_id) as conn:
-        rows = conn.execute(
-            "select c.document_id, d.filename, d.sensitivity, c.content "
-            "from document_chunks c join documents d on d.id = c.document_id "
-            "where c.org_id = %s order by c.embedding <=> %s::vector limit %s",
-            (org_id, to_pgvector(query_vector), RETRIEVAL_TOP_K),
-        ).fetchall()
-    chunks, citations, source_ids = [], [], []
-    for i, (document_id, filename, sensitivity, content) in enumerate(rows, start=1):
-        chunks.append(
-            RetrievedChunk(
-                document_id=str(document_id),
-                filename=filename,
-                sensitivity=sensitivity,
-                content=content,
-            )
+        chunks = retrieve_chunks(conn, org_id, query, embedder)
+    citations, source_ids = [], []
+    for i, chunk in enumerate(chunks, start=1):
+        citations.append(
+            {"source": i, "document_id": chunk.document_id, "filename": chunk.filename}
         )
-        citations.append({"source": i, "document_id": str(document_id), "filename": filename})
-        source_ids.append(str(document_id))
+        source_ids.append(chunk.document_id)
     return chunks, citations, list(dict.fromkeys(source_ids))
