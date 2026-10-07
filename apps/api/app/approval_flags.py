@@ -36,38 +36,55 @@ def _text_of(args: BaseModel) -> str:
     return "\n".join(v for v in args.model_dump().values() if isinstance(v, str))
 
 
+def _split(url: str):
+    # urlsplit raises ValueError on some hostile netlocs (e.g. a fullwidth "#" that
+    # NFKC-normalizes to a delimiter). A document must not be able to crash the
+    # proposal, so every split goes through here; None means malformed.
+    try:
+        return urlsplit(url)
+    except ValueError:
+        return None
+
+
 def _path_key(parts) -> tuple[str, str, str]:
     path = parts.path[:-1] if parts.path.endswith("/") else parts.path
     return (parts.hostname or "", path, parts.query)
 
 
-def _key(url: str) -> tuple[str, str, str, str]:
+def _key(url: str) -> tuple[str, str, str, str] | None:
     # Lowercased scheme and host, one trailing "/" stripped, query kept.
-    parts = urlsplit(url)
-    return (parts.scheme.lower(), *_path_key(parts))
+    parts = _split(url)
+    return None if parts is None else (parts.scheme.lower(), *_path_key(parts))
 
 
 def _schemeless_hosts(chunks: list[RetrievedChunk]) -> dict[str, str]:
     hosts: dict[str, str] = {}
     for c in chunks:
         for u in _urls(c.content):
-            host = urlsplit(u).hostname
+            parts = _split(u)
+            host = parts.hostname if parts else None
             if host:
                 hosts.setdefault(host.lower(), c.filename)
     return hosts
 
 
 def _url_flags(text: str, chunks: list[RetrievedChunk]) -> list[dict]:
-    chunk_keys = [(c.filename, {_key(u) for u in _urls(c.content)}) for c in chunks]
+    chunk_keys = [(c.filename, {k for u in _urls(c.content) if (k := _key(u))},
+                   set(_urls(c.content))) for c in chunks]
     flags = []
     seen: set[tuple[str, str, str]] = set()
     for url in _urls(text):
         k = _key(url)
-        if k[1:] in seen:
-            continue
-        seen.add(k[1:])
-        source = next((name for name, keys in chunk_keys if k in keys), "model")
-        flags.append({"url": url, "host": urlsplit(url).hostname or "", "source": source})
+        if k is not None:
+            if k[1:] in seen:
+                continue
+            seen.add(k[1:])
+        # Malformed URLs are never dropped: they match a chunk only by exact string.
+        source = next((name for name, keys, raw in chunk_keys
+                       if (k in keys if k is not None else url in raw)), "model")
+        parts = _split(url)
+        flags.append({"url": url, "host": (parts.hostname if parts else None) or "",
+                      "source": source})
     # A note can drop the scheme ("sso-acme-verify.example/login"). Only hosts that a
     # retrieved document already mentioned are flagged; arbitrary bare domains are not.
     hosts = _schemeless_hosts(chunks)
@@ -77,7 +94,10 @@ def _url_flags(text: str, chunks: list[RetrievedChunk]) -> list[dict]:
         host = next((h for h in hosts if low == h or low.startswith(h + "/")), None)
         if host is None:
             continue
-        k = _path_key(urlsplit("//" + low))
+        parts = _split("//" + low)
+        if parts is None:
+            continue
+        k = _path_key(parts)
         if k in seen:
             continue
         seen.add(k)

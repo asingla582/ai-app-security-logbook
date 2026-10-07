@@ -98,3 +98,18 @@ def test_full_and_schemeless_forms_make_one_entry():
 
 def test_bare_domain_in_no_chunk_is_not_flagged():
     assert _flag("also try evil.example/x for details") == []
+
+
+BAD = "https://exa＃mple.com/x"
+
+
+def test_malformed_chunk_url_does_not_crash_the_proposal():
+    bad_doc = RetrievedChunk(document_id="d2", filename="bad.md", sensitivity="internal",
+                             content=f"see {BAD} for details")
+    args = CreateNoteArgs(title="t", body="plain note")
+    assert approval_flags(args, [bad_doc, DOC])["urls"] == []
+
+
+def test_malformed_url_in_note_is_still_flagged():
+    urls = approval_flags(CreateNoteArgs(title="t", body=f"go to {BAD}"), [DOC])["urls"]
+    assert len(urls) == 1 and urls[0]["host"] == "" and urls[0]["source"] == "model"
