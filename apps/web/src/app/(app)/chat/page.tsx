@@ -2,14 +2,16 @@
 
 import { useEffect, useState } from "react";
 
+import { approveAction, denyAction, listPending } from "@/lib/actions";
 import { apiFetch } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 
 import { AssistantMarkdown } from "./AssistantMarkdown";
+import { ApprovalCard, type CardStatus, type PendingAction } from "./ApprovalCard";
 import { ToolIndicator, type ToolUsed } from "./ToolIndicator";
 
 type Conversation = { id: string; title: string };
-type Message = { role: string; content: string; toolUsed?: ToolUsed };
+type Message = { role: string; content: string; toolUsed?: ToolUsed; pendingId?: string };
 
 async function token(): Promise<string> {
   const { data } = await supabase.auth.getSession();
@@ -22,6 +24,7 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<Record<string, { action: PendingAction; status: CardStatus }>>({});
 
   async function loadConversations() {
     const res = await apiFetch("/conversations", await token());
@@ -32,6 +35,15 @@ export default function ChatPage() {
     setActiveId(id);
     const res = await apiFetch(`/conversations/${id}`, await token());
     if (res.ok) setMessages((await res.json()).messages);
+    const restored = await listPending(id, await token());
+    setPending(Object.fromEntries(restored.map((a) => [a.id, { action: a, status: "pending" as CardStatus }])));
+  }
+
+  // Disabling while busy is what stops a double click from sending two approvals.
+  async function decide(id: string, fn: (tok: string) => Promise<CardStatus>) {
+    setPending((p) => ({ ...p, [id]: { ...p[id], status: "busy" } }));
+    const status = await fn(await token());
+    setPending((p) => ({ ...p, [id]: { ...p[id], status } }));
   }
 
   useEffect(() => {
@@ -45,6 +57,7 @@ export default function ChatPage() {
     await loadConversations();
     setActiveId(conv.id);
     setMessages([]);
+    setPending({});
   }
 
   async function send(e: React.FormEvent) {
@@ -59,14 +72,32 @@ export default function ChatPage() {
       body: JSON.stringify({ content: text }),
     });
     if (res.ok) {
-      const { reply, tool_used } = await res.json();
-      setMessages((m) => [...m, { role: "assistant", content: reply, toolUsed: tool_used ?? null }]);
+      const { reply, tool_used, pending_action: pa } = await res.json();
+      if (pa) setPending((p) => ({ ...p, [pa.id]: { action: pa, status: "pending" } }));
+      setMessages((m) => [
+        ...m,
+        { role: "assistant", content: reply, toolUsed: tool_used ?? null, pendingId: pa?.id },
+      ]);
       loadConversations();
     } else {
       setMessages((m) => [...m, { role: "assistant", content: "(the assistant is unavailable)" }]);
     }
     setBusy(false);
   }
+
+  function renderCard(id: string) {
+    return (
+      <ApprovalCard
+        action={pending[id].action}
+        status={pending[id].status}
+        onApprove={() => decide(id, (tok) => approveAction(pending[id].action, tok))}
+        onDeny={() => decide(id, (tok) => denyAction(id, tok))}
+      />
+    );
+  }
+
+  const referenced = new Set(messages.map((m) => m.pendingId).filter(Boolean));
+  const orphans = Object.keys(pending).filter((id) => !referenced.has(id));
 
   return (
     <div className="flex gap-6">
@@ -119,8 +150,21 @@ export default function ChatPage() {
                     {m.role === "user" ? m.content : <AssistantMarkdown content={m.content} />}
                   </span>
                   {m.role === "assistant" && <ToolIndicator toolUsed={m.toolUsed ?? null} />}
+                  {m.pendingId && pending[m.pendingId] && (
+                    renderCard(m.pendingId)
+                  )}
                 </div>
               ))}
+              {orphans.length > 0 && (
+                <div>
+                  <div className="text-xs font-medium text-neutral-500">Waiting for your approval</div>
+                  {orphans.map((id) => (
+                    <div key={id}>
+                      {renderCard(id)}
+                    </div>
+                  ))}
+                </div>
+              )}
               {busy && <div className="text-sm text-neutral-400">…</div>}
             </div>
             <form onSubmit={send} className="flex gap-2 border-t border-neutral-200 p-3">
