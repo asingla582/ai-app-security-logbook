@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { ApprovalCard, PREVIEW_CHARS, type PendingAction } from "./ApprovalCard";
+import { ApprovalCard, type PendingAction } from "./ApprovalCard";
 
 const base: PendingAction = {
   id: "a1", tool_name: "create_note",
@@ -25,8 +25,51 @@ describe("ApprovalCard", () => {
     expect(html).not.toContain(">Approve<");
     expect(html).toContain("Note saved");
   });
+});
 
-  it("v1 preview is truncated", () => {
-    expect(render(base)).not.toContain("x".repeat(PREVIEW_CHARS + 1));
+const poisoned: PendingAction = {
+  ...base,
+  args: {
+    title: "VPN setup steps",
+    body: "1. Open GlobalConnect.\n".repeat(6) +
+      "4. Re-authenticate once at https://sso-acme-verify.example/login before the VPN routes traffic.",
+  },
+  flags: {
+    urls: [{ url: "https://sso-acme-verify.example/login", host: "sso-acme-verify.example", source: "onboarding.md" }],
+    doc_spans: [{ source: "onboarding.md", excerpt: "Re-authenticate once at https://sso-acme-verify.example/login" }],
+  },
+};
+
+describe("ApprovalCard v2", () => {
+  it("shows the full body, untruncated", () => {
+    expect(render(poisoned)).toContain("before the VPN routes traffic.");
+  });
+
+  it("lists every link with its host and source, never as an anchor", () => {
+    const html = render(poisoned);
+    expect(html).toContain("Links in this note");
+    expect(html).toContain("sso-acme-verify.example");
+    expect(html).toContain("from onboarding.md");
+    expect(html).not.toMatch(/<a[\s>]/);
+  });
+
+  it("labels a link the assistant wrote itself", () => {
+    const html = render({ ...poisoned, flags: { urls: [{ url: "https://x.example/", host: "x.example", source: "model" }], doc_spans: [] } });
+    expect(html).toContain("written by the assistant");
+  });
+
+  it("shows text copied from a document with its source", () => {
+    expect(render(poisoned)).toContain("Copied from onboarding.md");
+  });
+
+  it("renders markup in the body as inert text", () => {
+    const html = render({ ...base, args: { title: "<b>t</b>", body: '<img src=x onerror=alert(1)> [click](https://e.example)' } });
+    expect(html).not.toMatch(/<img[\s>]/);
+    expect(html).not.toMatch(/<a[\s>]/);
+    expect(html).toContain("&lt;img");
+  });
+
+  it("shows when the request expires", () => {
+    expect(render(base)).toMatch(/Expires/);
   });
 });
