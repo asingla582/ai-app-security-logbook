@@ -62,7 +62,6 @@ def test_model_supplied_org_id_is_rejected_and_no_note_lands(alice_client, bob_s
     assert "pwn" not in _titles(alice_client, alice_org)
 
 
-@pytest.mark.skip(reason="re-homed to approve path in Task 4")
 def test_tool_created_note_lands_in_callers_org_only(alice_client, bob_setup):
     # A legitimate create_note lands in the caller's own org and nowhere else.
     bob, bob_org = bob_setup["client"], bob_setup["org_id"]
@@ -74,9 +73,12 @@ def test_tool_created_note_lands_in_callers_org_only(alice_client, bob_setup):
         conv = alice_client.post("/conversations").json()["id"]
         r = alice_client.post(f"/conversations/{conv}/messages", json={"content": "save it"})
         assert r.status_code == 201
-        assert r.json()["tool_used"]["name"] == "create_note"
+        pa = r.json()["pending_action"]
     finally:
         _restore_gateway()
+
+    a = alice_client.post(f"/actions/{pa['id']}/approve", json={"args_sha256": pa["args_sha256"]})
+    assert a.status_code == 200 and a.json()["status"] == "executed"
 
     assert "AliceOnly" in _titles(alice_client, alice_org)  # positive: it really landed
     assert "AliceOnly" not in _titles(bob, bob_org)  # isolation: not in another tenant

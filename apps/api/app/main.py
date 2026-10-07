@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .auth import User, get_current_user
 from .config import WEB_ORIGIN
+from .routes_actions import router as actions_router
 from .routes_chat import router as chat_router
 from .routes_documents import router as documents_router
 from .routes_notes import router as notes_router
@@ -25,6 +26,7 @@ app.include_router(orgs_router)
 app.include_router(notes_router)
 app.include_router(chat_router)
 app.include_router(documents_router)
+app.include_router(actions_router)
 
 
 @app.middleware("http")
