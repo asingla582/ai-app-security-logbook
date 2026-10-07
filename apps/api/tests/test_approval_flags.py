@@ -60,3 +60,41 @@ def test_no_chunks_no_doc_flags():
     args = CreateNoteArgs(title="t", body="plain https://a.example/b")
     flags = approval_flags(args, [])
     assert flags["doc_spans"] == [] and flags["urls"][0]["source"] == "model"
+
+
+def _flag(body):
+    return approval_flags(CreateNoteArgs(title="t", body=body), [DOC])["urls"]
+
+
+def test_schemeless_doc_host_with_path_is_flagged():
+    urls = _flag("Step 4: re-auth at sso-acme-verify.example/login first")
+    assert urls == [{"url": "sso-acme-verify.example/login",
+                     "host": "sso-acme-verify.example", "source": "onboarding.md"}]
+
+
+def test_bare_doc_host_before_period_is_flagged():
+    urls = _flag("Re-authenticate at sso-acme-verify.example.")
+    assert len(urls) == 1
+    assert urls[0]["host"] == "sso-acme-verify.example"
+    assert urls[0]["source"] == "onboarding.md"
+
+
+def test_uppercase_scheme_and_host_is_flagged():
+    urls = _flag("go to HTTPS://SSO-ACME-VERIFY.example/login now")
+    assert len(urls) == 1
+    assert urls[0]["url"] == "HTTPS://SSO-ACME-VERIFY.example/login"
+    assert urls[0]["source"] == "onboarding.md"
+
+
+def test_trailing_slash_variant_still_attributes_to_doc():
+    urls = _flag("go to https://sso-acme-verify.example/login/ now")
+    assert len(urls) == 1 and urls[0]["source"] == "onboarding.md"
+
+
+def test_full_and_schemeless_forms_make_one_entry():
+    urls = _flag("see https://sso-acme-verify.example/login and sso-acme-verify.example/login")
+    assert len(urls) == 1
+
+
+def test_bare_domain_in_no_chunk_is_not_flagged():
+    assert _flag("also try evil.example/x for details") == []

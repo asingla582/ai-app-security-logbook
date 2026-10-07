@@ -6,6 +6,7 @@ then. Two signals: every URL in the action (with the document it came from, or
 document. Approval without these is theater: a plausible note hides a planted link.
 """
 
+import re
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel
@@ -19,22 +20,68 @@ _MAX_SPANS = 5
 _MAX_EXCERPT = 200
 
 
+# Local, case-insensitive copy: the output sanitizer's _URL stays untouched.
+_URL_ANY_CASE = re.compile(_URL.pattern, re.IGNORECASE)
+_TOKEN_EDGE = ".,;:!?)]>\"'`*"
+_TOKEN_LEAD = "(<[\"'`*"
+
+
 def _urls(text: str) -> list[str]:
     # Sentence punctuation after a URL is prose, not part of the address; strip it on
     # both sides so the note's URL and the document's URL compare equal.
-    return list(dict.fromkeys(u.rstrip(_TRAILING) for u in _URL.findall(text)))
+    return list(dict.fromkeys(u.rstrip(_TRAILING) for u in _URL_ANY_CASE.findall(text)))
 
 
 def _text_of(args: BaseModel) -> str:
     return "\n".join(v for v in args.model_dump().values() if isinstance(v, str))
 
 
+def _path_key(parts) -> tuple[str, str, str]:
+    path = parts.path[:-1] if parts.path.endswith("/") else parts.path
+    return (parts.hostname or "", path, parts.query)
+
+
+def _key(url: str) -> tuple[str, str, str, str]:
+    # Lowercased scheme and host, one trailing "/" stripped, query kept.
+    parts = urlsplit(url)
+    return (parts.scheme.lower(), *_path_key(parts))
+
+
+def _schemeless_hosts(chunks: list[RetrievedChunk]) -> dict[str, str]:
+    hosts: dict[str, str] = {}
+    for c in chunks:
+        for u in _urls(c.content):
+            host = urlsplit(u).hostname
+            if host:
+                hosts.setdefault(host.lower(), c.filename)
+    return hosts
+
+
 def _url_flags(text: str, chunks: list[RetrievedChunk]) -> list[dict]:
-    chunk_urls = [(c.filename, set(_urls(c.content))) for c in chunks]
+    chunk_keys = [(c.filename, {_key(u) for u in _urls(c.content)}) for c in chunks]
     flags = []
+    seen: set[tuple[str, str, str]] = set()
     for url in _urls(text):
-        source = next((name for name, urls in chunk_urls if url in urls), "model")
+        k = _key(url)
+        if k[1:] in seen:
+            continue
+        seen.add(k[1:])
+        source = next((name for name, keys in chunk_keys if k in keys), "model")
         flags.append({"url": url, "host": urlsplit(url).hostname or "", "source": source})
+    # A note can drop the scheme ("sso-acme-verify.example/login"). Only hosts that a
+    # retrieved document already mentioned are flagged; arbitrary bare domains are not.
+    hosts = _schemeless_hosts(chunks)
+    for raw in text.split():
+        token = raw.lstrip(_TOKEN_LEAD).rstrip(_TOKEN_EDGE)
+        low = token.lower()
+        host = next((h for h in hosts if low == h or low.startswith(h + "/")), None)
+        if host is None:
+            continue
+        k = _path_key(urlsplit("//" + low))
+        if k in seen:
+            continue
+        seen.add(k)
+        flags.append({"url": token, "host": host, "source": hosts[host]})
     return flags
 
 
