@@ -78,3 +78,9 @@ theater-week8:
 theater-week8-v2:
 	mkdir -p evidence/week8
 	set -a; . ./.env; set +a; cd apps/api && . .venv/bin/activate && python -u ../../evidence/week8/theater_week8.py 2>&1 | tee ../../evidence/week8/theater-run-v2.txt
+
+# Week 8 red team: structural attacks on the approval gate (mutation, forgery,
+# replay, injection bypass) + the trajectory check. REDTEAM_RUNS=10 for evidence.
+redteam-week8:
+	mkdir -p evidence/week8
+	set -a; . ./.env; set +a; cd apps/api && . .venv/bin/activate && python -u ../../evidence/week8/redteam_week8.py 2>&1 | tee ../../evidence/week8/redteam-run.txt
