@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { approveAction, denyAction, listPending } from "@/lib/actions";
 import { apiFetch } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 
 import { AssistantMarkdown } from "./AssistantMarkdown";
-import { ApprovalCard, type CardStatus, type PendingAction } from "./ApprovalCard";
+import { ApprovalCard, type CardStatus } from "./ApprovalCard";
+import { withStatus, type PendingMap } from "./pendingState";
 import { ToolIndicator, type ToolUsed } from "./ToolIndicator";
 
 type Conversation = { id: string; title: string };
@@ -24,7 +25,8 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const [pending, setPending] = useState<Record<string, { action: PendingAction; status: CardStatus }>>({});
+  const [pending, setPending] = useState<PendingMap>({});
+  const activeRef = useRef<string | null>(null);
 
   async function loadConversations() {
     const res = await apiFetch("/conversations", await token());
@@ -32,18 +34,27 @@ export default function ChatPage() {
   }
 
   async function openConversation(id: string) {
+    activeRef.current = id;
     setActiveId(id);
+    setMessages([]);
+    setPending({});
     const res = await apiFetch(`/conversations/${id}`, await token());
-    if (res.ok) setMessages((await res.json()).messages);
+    if (activeRef.current !== id) return;
+    if (res.ok) {
+      const body = await res.json();
+      if (activeRef.current !== id) return;
+      setMessages(body.messages);
+    }
     const restored = await listPending(id, await token());
+    if (activeRef.current !== id) return;
     setPending(Object.fromEntries(restored.map((a) => [a.id, { action: a, status: "pending" as CardStatus }])));
   }
 
   // Disabling while busy is what stops a double click from sending two approvals.
   async function decide(id: string, fn: (tok: string) => Promise<CardStatus>) {
-    setPending((p) => ({ ...p, [id]: { ...p[id], status: "busy" } }));
+    setPending((p) => withStatus(p, id, "busy"));
     const status = await fn(await token());
-    setPending((p) => ({ ...p, [id]: { ...p[id], status } }));
+    setPending((p) => withStatus(p, id, status));
   }
 
   useEffect(() => {
@@ -55,6 +66,7 @@ export default function ChatPage() {
     if (!res.ok) return;
     const conv = await res.json();
     await loadConversations();
+    activeRef.current = conv.id;
     setActiveId(conv.id);
     setMessages([]);
     setPending({});
