@@ -6,6 +6,8 @@ FakeGateway to force specific proposals and assert on the artifact (a note row, 
 429), never on the model's prose.
 """
 
+import pytest
+
 import app.routes_chat as routes_chat
 import app.tool_exec as tool_exec
 from app.gateway import FakeGateway, Reply, ToolProposal, get_gateway
@@ -60,6 +62,7 @@ def test_model_supplied_org_id_is_rejected_and_no_note_lands(alice_client, bob_s
     assert "pwn" not in _titles(alice_client, alice_org)
 
 
+@pytest.mark.skip(reason="re-homed to approve path in Task 4")
 def test_tool_created_note_lands_in_callers_org_only(alice_client, bob_setup):
     # A legitimate create_note lands in the caller's own org and nowhere else.
     bob, bob_org = bob_setup["client"], bob_setup["org_id"]

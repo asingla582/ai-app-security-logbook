@@ -37,6 +37,7 @@ class ToolResult:
     content: str                     # what the model reads (RETRIEVED tier)
     summary: str                     # what the audit stores (redacted at write)
     chunks: list[RetrievedChunk]     # what re-enters assemble_chat_prompt
+    ref: str | None = None           # id of what the tool created, if anything
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,9 @@ class ToolSpec:
     # connection). An executor that writes must commit its own work; the pipeline's
     # trajectory finalize runs on the same connection afterward.
     execute: Callable
+    # Week 8: when true the proposal is parked as a pending action and executes only
+    # after the requester approves it. Registry data, never model-chosen.
+    requires_approval: bool = False
 
 
 def validate_args(spec: ToolSpec, raw: dict) -> BaseModel:
@@ -111,6 +115,7 @@ REGISTRY: dict[str, ToolSpec] = {
         args_model=CreateNoteArgs,
         authorize=_authorize_create_note,
         execute=_execute_create_note,
+        requires_approval=True,
     ),
 }
 

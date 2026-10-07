@@ -170,7 +170,8 @@ def post_message(
         )
         conn.commit()
 
-    return {"reply": safe.text, "sources": citations, "tool_used": outcome.tool_used}
+    return {"reply": safe.text, "sources": citations, "tool_used": outcome.tool_used,
+            "pending_action": outcome.pending_action}
 
 
 def _retrieve(user_id: str, org_id: str, query: str, embedder: Embedder):

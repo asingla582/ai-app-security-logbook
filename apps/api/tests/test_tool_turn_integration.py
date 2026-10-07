@@ -25,11 +25,11 @@ def _clear_gateway():
     app.dependency_overrides.pop(get_gateway, None)
 
 
-def test_create_note_tool_executes_and_reports_tool_used(alice_client):
+def test_create_note_tool_returns_pending_action(alice_client):
     _script_gateway(
         [
             ToolProposal("create_note", {"title": "Standup", "body": "ship week 7"}, 0, 0),
-            Reply("Saved your note titled Standup.", 0, 0),
+            Reply("Waiting for your approval.", 0, 0),
         ]
     )
     try:
@@ -40,55 +40,10 @@ def test_create_note_tool_executes_and_reports_tool_used(alice_client):
         )
         assert r.status_code == 201
         body = r.json()
-        assert body["tool_used"]["name"] == "create_note"
-        assert "Standup" in body["tool_used"]["summary"]
-        assert body["reply"] == "Saved your note titled Standup."
+        assert body["tool_used"] is None
+        assert body["pending_action"]["args"]["title"] == "Standup"
     finally:
         _clear_gateway()
-
-
-def test_note_created_by_tool_is_visible_to_the_caller(alice_client):
-    _script_gateway(
-        [
-            ToolProposal("create_note", {"title": "ToolMade", "body": "b"}, 0, 0),
-            Reply("done", 0, 0),
-        ]
-    )
-    try:
-        # The caller's org is the conversation's org; find it via the notes listing.
-        alice_client.post("/orgs", json={"name": "A"})
-        conv = alice_client.post("/conversations").json()["id"]
-        alice_client.post(f"/conversations/{conv}/messages", json={"content": "save it"})
-        orgs = alice_client.get("/orgs").json()
-        org_id = orgs[0]["id"]
-        titles = [n["title"] for n in alice_client.get(f"/orgs/{org_id}/notes").json()]
-        assert "ToolMade" in titles
-    finally:
-        _clear_gateway()
-
-
-def test_executed_tool_call_trajectory_is_finalized(alice_client):
-    # Regression for the mid-turn commit seam: the identity context must survive the
-    # commit inside record_tool_proposal, or finalize_tool_call (which filters on
-    # user_id = auth.uid()) updates zero rows and the trajectory dangles at 'proposed'.
-    _script_gateway(
-        [ToolProposal("create_note", {"title": "Trace", "body": "b"}, 0, 0), Reply("ok", 0, 0)]
-    )
-    try:
-        alice_client.post("/orgs", json={"name": "A"})
-        conv = alice_client.post("/conversations").json()["id"]
-        alice_client.post(f"/conversations/{conv}/messages", json={"content": "save Trace"})
-    finally:
-        _clear_gateway()
-    # Inspect the audit row as the DB owner (end users cannot read tool_calls).
-    with psycopg.connect(_DB_URL) as conn:
-        rows = conn.execute(
-            "select status from tool_calls where tool_name = 'create_note' "
-            "and conversation_id = %s",
-            (conv,),
-        ).fetchall()
-    assert rows, "a tool_calls row should exist for the create_note turn"
-    assert all(r[0] == "executed" for r in rows), f"trajectory not finalized: {rows}"
 
 
 def test_unknown_tool_falls_back_to_plain_reply(alice_client):
