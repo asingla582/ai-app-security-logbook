@@ -263,3 +263,23 @@ def test_conversation_delete_nulls_terminal_row(member):
         conn.commit()
         assert conn.execute("select conversation_id, status from pending_actions where id = %s",
                             (row[0],)).fetchone() == (None, "denied")
+
+
+@pytest.mark.parametrize("sig", [
+    "create_pending_action(text, uuid, uuid, uuid, text, jsonb, jsonb)",
+    "claim_pending_action(uuid, text)",
+    "complete_pending_action(uuid, boolean, uuid, text)",
+    "deny_pending_action(uuid)",
+    "expire_my_pending_actions()",
+    "record_tool_proposal(text, uuid, uuid, text, jsonb, text)",
+    "finalize_tool_call(uuid, text, text, boolean)",
+])
+def test_definer_functions_executable_by_authenticated_not_anon(sig):
+    if not _supabase_reachable():
+        pytest.skip("local Supabase stack not reachable")
+    with psycopg.connect(DB_URL) as conn:
+        anon, authed = conn.execute(
+            "select has_function_privilege('anon', %s, 'execute'), "
+            "has_function_privilege('authenticated', %s, 'execute')", (sig, sig)
+        ).fetchone()
+    assert anon is False and authed is True

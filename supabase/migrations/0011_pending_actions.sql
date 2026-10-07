@@ -185,3 +185,13 @@ revoke all on function deny_pending_action(uuid) from public;
 grant execute on function deny_pending_action(uuid) to authenticated;
 revoke all on function expire_my_pending_actions() from public;
 grant execute on function expire_my_pending_actions() to authenticated;
+
+-- Supabase's default ACL grants EXECUTE directly to anon, so revoking from public is
+-- not enough. Close it for these functions and for 0008's trajectory functions.
+revoke execute on function create_pending_action(text, uuid, uuid, uuid, text, jsonb, jsonb) from anon;
+revoke execute on function claim_pending_action(uuid, text) from anon;
+revoke execute on function complete_pending_action(uuid, boolean, uuid, text) from anon;
+revoke execute on function deny_pending_action(uuid) from anon;
+revoke execute on function expire_my_pending_actions() from anon;
+revoke execute on function record_tool_proposal(text, uuid, uuid, text, jsonb, text) from anon;
+revoke execute on function finalize_tool_call(uuid, text, text, boolean) from anon;
