@@ -1,4 +1,4 @@
-.PHONY: up down setup test attack seed eval eval-baseline eval-indirect eval-tools redteam-week6 redteam-week7
+.PHONY: up down setup test attack seed eval eval-baseline eval-indirect eval-tools redteam-week6 redteam-week7 theater-week8 redteam-week8
 
 # Prepare a fresh clone: start Supabase, fill .env with its local keys, and build
 # the API virtualenv. Idempotent, safe to re-run. Needs Docker, Node (npx), Python 3.
@@ -67,3 +67,9 @@ eval-baseline:
 	mkdir -p evidence/week3
 	set -a; . ./.env; set +a; PROMPTFOO_PYTHON=apps/api/.venv/bin/python npx promptfoo@0.120.27 eval -c evals/promptfooconfig.baseline.yaml --no-cache --no-share \
 		-o evidence/week3/promptfoo-report-baseline-v1.json 2>&1 | tee evidence/week3/eval-run-baseline-v1.txt
+
+# Week 8 break: approval theater. A plausible doc's lookalike SSO link rides an
+# innocent "save these steps" request through a naive approval card. REDTEAM_RUNS=10.
+theater-week8:
+	mkdir -p evidence/week8
+	set -a; . ./.env; set +a; cd apps/api && . .venv/bin/activate && python ../../evidence/week8/theater_week8.py 2>&1 | tee ../../evidence/week8/theater-run.txt
