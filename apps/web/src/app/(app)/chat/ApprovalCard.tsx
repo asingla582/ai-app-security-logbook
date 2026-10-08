@@ -37,7 +37,7 @@ export function ApprovalCard({ action, status, onApprove, onDeny }: {
   const { urls, doc_spans } = action.flags;
   const expires = new Date(action.expires_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   return (
-    <div className="mt-2 max-w-[80%] rounded-xl border border-amber-300 bg-amber-50 p-3 text-left text-sm">
+    <div className="mt-2 max-w-[80%] rounded-xl border border-amber-300 bg-amber-50 p-3 text-left text-sm text-neutral-900">
       <div className="text-xs font-medium uppercase tracking-wide text-amber-800">
         The assistant wants to create a note. Read it before approving.
       </div>
@@ -77,7 +77,7 @@ export function ApprovalCard({ action, status, onApprove, onDeny }: {
           <button onClick={onApprove} disabled={status === "busy"}
             className="rounded-lg bg-neutral-900 px-3 py-1 text-white disabled:opacity-50">Approve</button>
           <button onClick={onDeny} disabled={status === "busy"}
-            className="rounded-lg border border-neutral-300 px-3 py-1 disabled:opacity-50">Deny</button>
+            className="rounded-lg border border-neutral-300 bg-white px-3 py-1 text-neutral-900 disabled:opacity-50">Deny</button>
         </div>
       ) : (
         <div className="mt-2 text-xs text-neutral-500">{DONE[status]}</div>
