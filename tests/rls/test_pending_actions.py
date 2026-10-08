@@ -165,6 +165,18 @@ def test_claim_outcomes(member):
                          (p["id"], p["hash"])).fetchone()[0] == "already_decided"
 
 
+def test_claim_with_null_hash_is_a_mismatch(member):
+    # NULL-safe comparison: a NULL hash must not claim the row.
+    user_id, org_id = member
+    with UserConn(user_id) as c:
+        p = _pending(c, org_id)
+    with UserConn(user_id) as c:
+        assert c.execute("select outcome from claim_pending_action(%s, %s)",
+                         (p["id"], None)).fetchone()[0] == "hash_mismatch"
+        c.commit()
+    assert _status(p["id"]) == "pending"
+
+
 def test_claim_requires_current_membership(member):
     user_id, org_id = member
     with UserConn(user_id) as c:

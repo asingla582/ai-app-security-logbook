@@ -121,7 +121,7 @@ begin
     return query select 'expired'::text, null::text, null::jsonb, null::uuid, null::uuid;
     return;
   end if;
-  if r.args_sha256 <> p_args_sha256 then
+  if p_args_sha256 is null or r.args_sha256 is distinct from p_args_sha256 then
     return query select 'hash_mismatch'::text, null::text, null::jsonb, null::uuid, null::uuid;
     return;
   end if;
