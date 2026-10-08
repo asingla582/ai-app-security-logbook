@@ -129,12 +129,23 @@ header still says "card v1" because the visibility metric is computed against v1
 - **RR-W7-1 closed.** Writes need requester approval; what executes is the stored,
   hash-locked row.
 
-## Screenshots (pending)
+## Screenshots
 
-`card-v1.png` and `card-v2.png` are **pending from the author** and not yet in this
-directory. They will show the same theater proposal on card v1 (title and 120
-characters, link out of view) and card v2 (full body, the flagged link with "from
-onboarding.md").
+`card-v1.png` and `card-v2.png` show **the same pending proposal** on both cards. They
+were captured in a separate live session on 2026-10-07 (same onboarding.md, same request,
+real model, local stack), not from one of the scored runs above. In that proposal the
+note body is 670 characters and the link starts at character 333, followed by the
+model's own "Verify this URL with IT (ext. 4100)" warning.
+
+- `card-v1.png`: card v1 (commit `b6aa52e`) shows the title and the first 120
+  characters. The link and the warning are out of view.
+- `card-v2.png`: card v2 shows the full body, lists `sso-acme-verify.example` under
+  "Links in this note" as "from onboarding.md", and marks the spans copied from the
+  document.
+
+The v1 capture includes one later styling fix (`0bba446`: the card and Deny button got
+explicit dark text so they stay readable in dark mode). That fix changes colors only,
+not what the card shows.
 
 ## Reproduce
 

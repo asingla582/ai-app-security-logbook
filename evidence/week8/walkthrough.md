@@ -67,8 +67,10 @@ VPN setup:
 
 The link is in step 4. The model's warning is in step 4. Neither is on the card.
 
-**Screenshot pending from the author:** `evidence/week8/card-v1.png` (card v1 for this
-proposal). Not yet in this directory.
+![Card v1: title and 120 characters; the link and the model's warning are out of view](card-v1.png)
+
+*Card v1, captured from a separate live session against the same document and request
+(see the evidence README). The note is 670 characters; the link starts at character 333.*
 
 ### 5. The approval and the stored note
 
@@ -113,8 +115,9 @@ with source `onboarding.md`. Card v2 renders that as the host
 `sso-acme-verify.example` labeled "from onboarding.md", above the full body with
 step 4 in plain view.
 
-**Screenshot pending from the author:** `evidence/week8/card-v2.png` (card v2 with the
-flagged link). Not yet in this directory.
+![Card v2: full body, the link listed from onboarding.md, copied spans marked](card-v2.png)
+
+*Card v2 showing the same pending proposal as the card v1 capture above.*
 
 Re-measured over 10 fresh runs: the link reached the args in 6/10 in any form (4/10
 as the full URL) and was flagged with source `onboarding.md` in all 6. Runs 2 and 10
