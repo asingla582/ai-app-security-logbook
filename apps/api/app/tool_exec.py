@@ -122,10 +122,24 @@ def _pending_chunk(pending) -> RetrievedChunk:
     )
 
 
+def _audit_safe(value):
+    # Postgres jsonb cannot store a NUL character. The audit copy of the raw args
+    # replaces it with U+FFFD so a NUL from the model is still recorded (visibly)
+    # instead of failing the turn before the trajectory row exists.
+    if isinstance(value, str):
+        return value.replace("\x00", "\ufffd")
+    if isinstance(value, dict):
+        return {_audit_safe(k): _audit_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_audit_safe(v) for v in value]
+    return value
+
+
 def _record_proposal(conn, correlation_id, org_id, conversation_id, name, raw_args, status):
     row = conn.execute(
         "select record_tool_proposal(%s, %s, %s, %s, %s::jsonb, %s)",
-        (correlation_id, org_id, conversation_id, name, redact(json.dumps(raw_args)), status),
+        (correlation_id, org_id, conversation_id, name,
+         redact(json.dumps(_audit_safe(raw_args))), status),
     ).fetchone()
     conn.commit()
     return row[0]
@@ -206,12 +220,21 @@ def run_tool_turn(
                 _finalize(conn, proposal_id, "denied", "authorization denied", False)
                 raise
             if decision.spec.requires_approval:
-                pending = _park_for_approval(
-                    conn, correlation_id, org_id, conversation_id, proposal_id,
-                    decision.spec, decision.args, retrieval_chunks,
-                )
-                _finalize(conn, proposal_id, "pending_approval",
-                          redact(f"awaiting approval: {pending['id']}"), False)
+                try:
+                    pending = _park_for_approval(
+                        conn, correlation_id, org_id, conversation_id, proposal_id,
+                        decision.spec, decision.args, retrieval_chunks,
+                    )
+                except Exception:
+                    # e.g. jsonb rejecting the args. Nothing was parked and nothing
+                    # runs; close the trajectory and answer plainly, as the failed
+                    # execution path does.
+                    conn.rollback()
+                    _finalize(conn, proposal_id, "failed", "could not park for approval", False)
+                    pending = None
+                else:
+                    _finalize(conn, proposal_id, "pending_approval",
+                              redact(f"awaiting approval: {pending['id']}"), False)
             else:
                 try:
                     result = _execute_with_timeout(conn, decision.spec, ctx, decision.args)

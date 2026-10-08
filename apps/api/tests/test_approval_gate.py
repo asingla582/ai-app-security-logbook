@@ -78,3 +78,41 @@ def test_search_documents_still_executes_without_approval(alice_client):
     _, r = _turn(alice_client, ToolProposal("search_documents", {"query": "x"}, 0, 0), reply="none")
     assert r.json()["tool_used"]["name"] == "search_documents"
     assert r.json()["pending_action"] is None
+
+
+def test_park_failure_finalizes_failed_and_answers_plainly(alice_client):
+    # jsonb rejects \u0000, so parking the exact args fails. The audit copy of the
+    # proposal records the NUL as U+FFFD, the trajectory is closed as 'failed' (not
+    # left at 'proposed'), and the turn answers plainly with nothing parked.
+    conv, r = _turn(alice_client, ToolProposal("create_note", {"title": "Nul", "body": "a\u0000b"}, 0, 0),
+                    reply="plain answer")
+    assert r.status_code == 201
+    body = r.json()
+    assert body["reply"] == "plain answer"
+    assert body["pending_action"] is None
+    assert body["tool_used"] is None
+    with psycopg.connect(_DB_URL) as conn:
+        tc = conn.execute("select status, args->>'body' from tool_calls where conversation_id = %s",
+                          (conv,)).fetchall()
+        pend = conn.execute("select 1 from pending_actions where conversation_id = %s", (conv,)).fetchall()
+    assert tc == [("failed", "a\ufffdb")]
+    assert pend == []
+
+
+def test_any_park_exception_finalizes_failed(alice_client, monkeypatch):
+    import app.tool_exec as tool_exec
+
+    def boom(*a, **k):
+        raise RuntimeError("park failed")
+
+    monkeypatch.setattr(tool_exec, "_park_for_approval", boom)
+    conv, r = _turn(alice_client, ToolProposal("create_note", {"title": "Boom", "body": "b"}, 0, 0),
+                    reply="plain answer")
+    assert r.status_code == 201
+    assert r.json()["pending_action"] is None
+    with psycopg.connect(_DB_URL) as conn:
+        tc = conn.execute("select status, result_summary, executed_at from tool_calls where conversation_id = %s",
+                          (conv,)).fetchall()
+        pend = conn.execute("select 1 from pending_actions where conversation_id = %s", (conv,)).fetchall()
+    assert tc == [("failed", "could not park for approval", None)]
+    assert pend == []
