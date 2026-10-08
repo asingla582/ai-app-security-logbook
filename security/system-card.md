@@ -99,6 +99,14 @@ every call is audited. Built as a public, week-by-week security engineering proj
   the full body.
 - A requester can write a forged completion record for their own action (RR-W8-3):
   audit integrity only, no privilege gain.
+- Definer functions from earlier migrations still executable by `anon` (RR-W8-4,
+  **open**, found in the week 8 final review): `record_model_call` also skips a
+  membership check, so anyone with the public anon key who knows an org UUID can write
+  audit rows and use up that org's daily model-call budget. Owned by follow-up
+  migration 0012.
+- An approved action can stay `approved` if the database fails between the claim and
+  completion: a stated limit. It fails closed (nothing runs twice), and no sweep for
+  such rows exists yet.
 - Fixed-window rate limits race under concurrency (RR-W7-2): accepted at this scale.
 - Document-hosted phishing links (RR-006): a forged document's own link is allowlist-legal
   and renders clickable in chat replies. **Accepted at v0.8** as a content-trust problem;

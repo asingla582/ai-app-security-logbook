@@ -260,10 +260,16 @@ Every documented finding to date, with an honest status. "Closed" here means
 | RR-W8-1 | An informed human can still approve a bad action. HITL buys informed consent, not correctness | **Open, accepted** | Mitigated by provenance flags (links with source, copied spans, full body on the card). Candidate further controls: a four-eyes rule for flagged actions, URL reputation |
 | RR-W8-2 | Flag detection limits: scheme-less links are detected only for hosts a retrieved document mentioned, by whitespace token; obfuscated forms (`host[.]example`, text glued to the host, port or userinfo forms) are not flagged; a link the model invents with no document source is flagged "written by the assistant" only if it has a scheme | **Open, accepted** | The card always shows the full body, so the human can still read an unflagged link. Flags are an aid, not a filter |
 | RR-W8-3 | `complete_pending_action` is callable by the requester directly after their own claim, so a user can write a forged "executed" audit trail (and an unredacted `result_summary`) for their **own** action without running it | **Open, accepted** | Same pattern as Week 7's `finalize_tool_call`. No privilege gain and no cross-user effect; audit integrity only |
+| RR-W8-4 | Pre-existing, found in the week 8 final review: some SECURITY DEFINER functions from earlier migrations are still executable by `anon` through Supabase's default ACL (`record_model_call`, `count_org_model_calls_1d`, `count_user_tool_calls_1m`, `owns_conversation`, `is_org_member`, `is_org_owner`, `create_organization`). `record_model_call` also does not check membership of `p_org_id`, so anyone holding the public anon key who knows an org UUID can insert audit rows and exhaust that org's daily model-call budget | **Open** | Follow-up migration 0012: revoke `anon` EXECUTE on these functions and add a membership check to `record_model_call`. Not fixed on the week 8 branch |
 | RR-006 | Document-hosted URLs are allowlist-legal: a forged page's phishing link renders clickable, attributed but live (10/10) | **Accepted** (v0.8) | Weighed at v0.8 and accepted. This is a content-trust problem (is the document honest?), not an output-channel one. Links are attributed to their source, and the approval card's link listing applies the same idea to writes. Candidate controls if it needs to close: URL reputation, a sensitivity-scoped link policy, non-clickable document links in chat replies. See v1.2 and v1.4 deltas |
 
 No finding is un-triaged. The "open, accepted" residuals are genuine and stated
 plainly rather than closed with a false fix.
+
+Stated limit (Week 8), not a finding: if the database fails between an approval's
+claim and its completion, the row can stay `approved` with nothing executed. This
+fails closed (the claim is single-use, so nothing runs twice), but the row is not
+retried or cleaned up, and no sweep for stuck `approved` rows exists yet.
 
 ---
 
@@ -306,7 +312,7 @@ evidence linked. Since Week 8, a write executes only after its requester approve
 exact stored row, which the database will not let anyone alter; whether that approval
 is a good decision is still a human judgment (RR-W8-1). The known-open items
 (redaction residuals, fixed-window rate limits, flag detection limits, document-hosted
-links) are named above with owners or an accepted status. Nothing here is claimed as
+links, `anon`-executable definer functions) are named above with owners or an accepted status. Nothing here is claimed as
 "solved."
 
 ---
@@ -499,4 +505,11 @@ human decides too.
   are URL reputation, a sensitivity-scoped link policy and non-clickable document
   links in chat replies. Stated limit, not a residual: if the database errors
   between claim and completion, a row can stay `approved`; this fails closed and
-  nothing runs twice.
+  nothing runs twice, and no sweep for such rows exists yet.
+- **Final review (week 8).** Closed a proposal-time allowlist laundering: the
+  pending-approval chunk echoed the model's proposed title back as `RETRIEVED`
+  context, so a URL the model wrote into the title stayed clickable in the reply.
+  The output allowlist is now built only from document-derived chunks (chat
+  retrieval and `search_documents` results). The same review recorded RR-W8-4
+  (open, pre-existing): definer functions from earlier migrations still executable
+  by `anon`, owned by follow-up migration 0012.
