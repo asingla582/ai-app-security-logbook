@@ -32,25 +32,27 @@ attack:
 	mkdir -p evidence/week1
 	set -a; . ./.env; set +a; cd apps/api && . .venv/bin/activate && pytest tests/test_attacks.py -v 2>&1 | tee ../../evidence/week1/attack-run.txt
 
-# Direct-injection eval against the shipped prompt; report is the release evidence.
-# (Week 3 corpus, re-run each release; week3's original v3 report stays untouched.)
+# Direct-injection eval against the active prompt (chat v6 at week 8); writes the
+# week 8 release evidence. Week 3 corpus; earlier weeks' reports stay untouched.
 eval:
-	mkdir -p evidence/week6
+	mkdir -p evidence/week8
 	set -a; . ./.env; set +a; PROMPTFOO_PYTHON=apps/api/.venv/bin/python npx promptfoo@0.120.27 eval -c evals/promptfooconfig.yaml --no-cache --no-share \
-		-o evidence/week6/promptfoo-report-direct.json 2>&1 | tee evidence/week6/eval-run-direct.txt
+		-o evidence/week8/promptfoo-report-direct-v6.json 2>&1 | tee evidence/week8/eval-run-direct-v6.txt
 
-# Week 6 indirect-injection eval: poisoned documents through the real RAG assembly.
+# Indirect-injection eval (Week 6 corpus): poisoned documents through the real RAG
+# assembly, against the active prompt. Writes the week 8 evidence; week 6's stays untouched.
 eval-indirect:
-	mkdir -p evidence/week6
+	mkdir -p evidence/week8
 	set -a; . ./.env; set +a; PROMPTFOO_PYTHON=apps/api/.venv/bin/python npx promptfoo@0.120.27 eval -c evals/promptfooconfig.indirect.yaml --no-cache --no-share \
-		-o evidence/week6/promptfoo-report-indirect.json 2>&1 | tee evidence/week6/eval-run-indirect.txt
+		-o evidence/week8/promptfoo-report-indirect-v6.json 2>&1 | tee evidence/week8/eval-run-indirect-v6.txt
 
-# Week 7 tool-injection eval: can a document steer the model into proposing an
-# action? Runs through the real assembly + propose() with the tool registry offered.
+# Tool-injection eval (Week 7 corpus): can a document steer the model into proposing
+# an action? Runs through the real assembly + propose() with the tool registry offered.
+# Writes the week 8 evidence; week 7's stays untouched.
 eval-tools:
-	mkdir -p evidence/week7
+	mkdir -p evidence/week8
 	set -a; . ./.env; set +a; PROMPTFOO_PYTHON=apps/api/.venv/bin/python npx promptfoo@0.120.27 eval -c evals/promptfooconfig.tools.yaml --no-cache --no-share \
-		-o evidence/week7/promptfoo-report-tools.json 2>&1 | tee evidence/week7/eval-run-tools.txt
+		-o evidence/week8/promptfoo-report-tools-v6.json 2>&1 | tee evidence/week8/eval-run-tools-v6.txt
 
 # Week 6 live red team: the malicious-document corpus against the running pipeline.
 # REDTEAM_RUNS=10 for recorded evidence; both defenses (prompt + sanitizer) in path.

@@ -143,8 +143,7 @@ REDTEAM_RUNS=10 make theater-week8      # the break, card v1 metrics (writes the
 REDTEAM_RUNS=10 make theater-week8-v2   # the same attack after the fix (writes theater-run-v2.txt)
 REDTEAM_RUNS=10 make redteam-week8      # structural attacks on the gate (writes redteam-run.txt)
 make eval eval-indirect eval-tools      # chat v6 regression (needs ANTHROPIC_API_KEY;
-                                        # these targets write to evidence/week6 and week7,
-                                        # the v6 runs were saved here as *-v6 files)
+                                        # writes the *-v6 files in this directory)
 make test                               # app, rls and web tests
 ```
 
