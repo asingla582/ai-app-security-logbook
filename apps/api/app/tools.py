@@ -38,6 +38,9 @@ class ToolResult:
     summary: str                     # what the audit stores (redacted at write)
     chunks: list[RetrievedChunk]     # what re-enters assemble_chat_prompt
     ref: str | None = None           # id of what the tool created, if anything
+    # True only when chunks are document text (search results). App-generated
+    # chunks echo model-written args, so they never feed the output allowlist.
+    document_derived: bool = False
 
 
 @dataclass(frozen=True)

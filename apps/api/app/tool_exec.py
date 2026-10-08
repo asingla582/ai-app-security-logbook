@@ -36,11 +36,15 @@ class TurnOutcome:
     tool_used: dict | None = None
     input_tokens: int = 0
     output_tokens: int = 0
-    # The chunks and provenance the FINAL model call saw, so the route can build the
-    # sanitizer allowlist and the audit provenance from exactly what produced the reply.
+    # The chunks and provenance the FINAL model call saw, for the audit provenance.
     final_chunks: list = field(default_factory=list)
     provenance: list = field(default_factory=list)
     pending_action: dict | None = None
+    # The document-derived subset of final_chunks (chat retrieval plus search
+    # results). The output allowlist is built from this only: app-generated chunks
+    # (pending-approval, note-confirmation) echo model-written text, and the grant is
+    # what a document literally says, never what the model assembles.
+    allowlist_chunks: list = field(default_factory=list)
 
 
 def _decide_tool(proposal) -> _Decision:
@@ -63,7 +67,7 @@ def search_documents_exec(ctx, args) -> ToolResult:
     # injected one (FakeEmbedder under test), never a global.
     chunks = retrieve_chunks(ctx.conn, ctx.org_id, args.query, ctx.embedder)
     summary = f"searched documents for {args.query!r}: {len(chunks)} passage(s)"
-    return ToolResult(content=summary, summary=summary, chunks=chunks)
+    return ToolResult(content=summary, summary=summary, chunks=chunks, document_derived=True)
 
 
 def create_note_exec(ctx, args) -> ToolResult:
@@ -176,6 +180,7 @@ def run_tool_turn(
             output_tokens=first.output_tokens,
             final_chunks=retrieval_chunks,
             provenance=prompt.provenance,
+            allowlist_chunks=list(retrieval_chunks),
         )
 
     decision = _decide_tool(first)
@@ -230,6 +235,7 @@ def run_tool_turn(
             final_chunks=final_chunks,
             provenance=prompt2.provenance,
             pending_action=pending,
+            allowlist_chunks=list(retrieval_chunks),
         )
 
     if result is None:
@@ -242,6 +248,7 @@ def run_tool_turn(
             output_tokens=first.output_tokens + reply.output_tokens,
             final_chunks=retrieval_chunks,
             provenance=prompt.provenance,
+            allowlist_chunks=list(retrieval_chunks),
         )
 
     final_chunks = list(retrieval_chunks) + list(result.chunks)
@@ -254,4 +261,6 @@ def run_tool_turn(
         output_tokens=first.output_tokens + reply.output_tokens,
         final_chunks=final_chunks,
         provenance=prompt2.provenance,
+        allowlist_chunks=list(retrieval_chunks)
+        + (list(result.chunks) if result.document_derived else []),
     )

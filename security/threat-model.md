@@ -159,8 +159,11 @@ not an exact technique ID.
   RLS-scoped connection (`tool_exec.py`), so a bypassed app check still meets RLS.
   Single-step is structural: the second (answering) model call is offered no tools, so
   the turn cannot chain. Tool results re-enter the model only through the one assembly
-  path as `RETRIEVED`-tier chunks (the Week 6 invariant), and their URLs inherit the
-  output allowlist.
+  path as `RETRIEVED`-tier chunks (the Week 6 invariant). The output allowlist is built
+  only from document-derived chunks (chat retrieval and `search_documents` results).
+  App-generated chunks (`pending-approval`, `note-confirmation`) echo model-written
+  arguments, so they are excluded; a URL the model puts in a proposed title stays
+  de-fanged (closed in the week 8 final review).
 - **Controls (resource, primary):** a per-org daily model-call ceiling (the
   denial-of-wallet cap) and a per-user tool-rate cap, counted from the audit tables via
   `SECURITY DEFINER` functions (`limits.py`, migration 0009) and returning HTTP 429 on

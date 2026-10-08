@@ -151,9 +151,10 @@ def post_message(
         raise HTTPException(status_code=502, detail="the assistant is unavailable") from None
 
     # Output side (Week 6): the reply is sanitized before it is stored or sent, so no
-    # client ever holds an unsanitized assistant message. The allowlist is built from
-    # every chunk the final answer saw, including any produced by a tool this turn.
-    safe = sanitize_output(outcome.reply_text, allowed_urls_from_chunks(outcome.final_chunks))
+    # client ever holds an unsanitized assistant message. The allowlist is built only
+    # from document-derived chunks (retrieval and search results), never from
+    # app-generated ones that echo model-written arguments (week 8 final review).
+    safe = sanitize_output(outcome.reply_text, allowed_urls_from_chunks(outcome.allowlist_chunks))
 
     with db_for_user(user.id) as conn:
         conn.execute(
