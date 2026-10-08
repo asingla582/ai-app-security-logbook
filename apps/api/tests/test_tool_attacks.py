@@ -6,6 +6,8 @@ FakeGateway to force specific proposals and assert on the artifact (a note row, 
 429), never on the model's prose.
 """
 
+import pytest
+
 import app.routes_chat as routes_chat
 import app.tool_exec as tool_exec
 from app.gateway import FakeGateway, Reply, ToolProposal, get_gateway
@@ -71,9 +73,12 @@ def test_tool_created_note_lands_in_callers_org_only(alice_client, bob_setup):
         conv = alice_client.post("/conversations").json()["id"]
         r = alice_client.post(f"/conversations/{conv}/messages", json={"content": "save it"})
         assert r.status_code == 201
-        assert r.json()["tool_used"]["name"] == "create_note"
+        pa = r.json()["pending_action"]
     finally:
         _restore_gateway()
+
+    a = alice_client.post(f"/actions/{pa['id']}/approve", json={"args_sha256": pa["args_sha256"]})
+    assert a.status_code == 200 and a.json()["status"] == "executed"
 
     assert "AliceOnly" in _titles(alice_client, alice_org)  # positive: it really landed
     assert "AliceOnly" not in _titles(bob, bob_org)  # isolation: not in another tenant

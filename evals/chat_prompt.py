@@ -34,8 +34,13 @@ def chat_v3(context: dict) -> list[dict]:
 
 
 def chat_v4(context: dict) -> list[dict]:
-    # The shipped prompt; this is what the CI gate runs against.
+    # Week 6/7 shipped prompt; kept for before/after comparison.
     return _messages(4, context)
+
+
+def chat_v6(context: dict) -> list[dict]:
+    # Week 8's shipped prompt (v5 + approval sentence); the CI gate runs this.
+    return _messages(6, context)
 
 
 def chat_v4_rag(context: dict) -> list[dict]:

@@ -55,6 +55,13 @@ make test    # run every test suite
 make attack  # run the cross-tenant attack suite and capture evidence
 ```
 
+Live-model attacks (need `ANTHROPIC_API_KEY`; `REDTEAM_RUNS=10` for recorded evidence):
+
+```
+make theater-week8   # Week 8 break: approval theater against the approval card
+make redteam-week8   # Week 8 structural attacks on the approval gate
+```
+
 `make up` is self-contained on a fresh clone: it starts the local Supabase stack,
 writes the local keys into `.env`, builds the API virtualenv, seeds the demo
 tenants, and launches the app. Chatting against the real model is optional; add
@@ -67,17 +74,17 @@ the database and by the API.
 
 ## Status
 
-**Week 1 shipped — Trust Foundation.** Auth, organizations, and notes, with tenant
+**Week 1 shipped: Trust Foundation.** Auth, organizations, and notes, with tenant
 isolation enforced by Postgres Row Level Security and a defense-in-depth
 authorization layer in the API. A five-part cross-tenant attack suite runs in CI;
 every attempt is denied and logged. See [`evidence/week1/`](evidence/week1/).
 
-**Week 2 shipped — First AI Slice.** Chat over a thin model gateway, a structured
+**Week 2 shipped: First AI Slice.** Chat over a thin model gateway, a structured
 audit log of every model call (redacted at the application boundary, correlated by
 request ID), and conversation lifecycle with real deletion. Attacked live; the
 redaction findings and fixes are in [`evidence/week2/`](evidence/week2/).
 
-**Week 3 shipped — Instruction Security.** Versioned prompt templates with the
+**Week 3 shipped: Instruction Security.** Versioned prompt templates with the
 prompt hash recorded in the audit log, and structural separation so user input can
 never occupy the system slot (proven by tests that never call the model). A
 Promptfoo direct-injection suite (override, role hijack, instruction leak) measures
@@ -91,26 +98,26 @@ a preview of why model output can't be trusted once it is rendered or fed to a t
 (Week 6). Measured results, the correction, and the honest residuals are in
 [`evidence/week3/`](evidence/week3/).
 
-**Week 4 shipped — v0.4 "Trust Foundation."** Hardening only, no new features. The
+**Week 4 shipped: v0.4 "Trust Foundation."** Hardening only, no new features. The
 open findings from weeks 1-3 are triaged in a versioned [threat model](security/threat-model.md)
 (closed-loop framing, mapped to OWASP LLM Top 10, NIST AI RMF, and MITRE ATLAS, with
 an honest maturity self-assessment) and summarized in a [system card](security/system-card.md).
 Local setup now works from a fresh clone: `make up` starts Supabase, fills `.env`,
 builds the API venv, seeds demo tenants, and runs the app.
 
-**Week 5 shipped — Secure RAG.** Document upload with sensitivity labels at ingest,
+**Week 5 shipped: Secure RAG.** Document upload with sensitivity labels at ingest,
 chunking + pgvector embeddings, and retrieval authorized by the database before the
-model sees anything — RLS plus an explicit org filter, proven with no model in the
+model sees anything: RLS plus an explicit org filter, proven with no model in the
 loop including a crafted-vector probe. Every model call records which documents fed
 it (data lineage in the audit log). Attacked live both ways: cross-tenant retrieval
 held; indirect content poisoning broke cleanly (a forged help page's phishing link,
 relayed with a citation), recorded as the open finding that owns Week 6. See
 [`evidence/week5/`](evidence/week5/).
 
-**Week 6 shipped — Indirect Injection & Output Handling.** Every piece of context
+**Week 6 shipped: Indirect Injection & Output Handling.** Every piece of context
 now carries a server-assigned trust tier (SYSTEM / USER / RETRIEVED); retrieved text
 enters the prompt only inside per-request nonce fences a document can neither know
-nor forge. On the way out — the EchoLeak lesson — model output is sanitized before
+nor forge. On the way out (the EchoLeak lesson), model output is sanitized before
 storage: images never survive, and a link stays clickable only if its exact URL
 already appears in the retrieved sources, with every verdict recorded in the audit
 log. Measured over 10 runs per attack: constructed-URL exfiltration (canary in an
@@ -120,7 +127,7 @@ RR-006 in the threat model. A third eval-scorer bug was caught and the detector
 rule codified: score what a renderer would activate, not what words appear. See
 [`evidence/week6/`](evidence/week6/).
 
-**Week 7 shipped — Secure Tool Calling.** The assistant gained two actions,
+**Week 7 shipped: Secure Tool Calling.** The assistant gained two actions,
 `search_documents` (read) and `create_note` (write), behind a single-step pipeline:
 the model only proposes a tool, and the application validates arguments, authorizes,
 executes on the caller's own connection, and records a proposed → decided → executed
@@ -129,19 +136,36 @@ id and forbid extras), so cross-tenant confused-deputy is impossible by construc
 proven with no model in the loop. Tool results re-enter the model only as fenced
 RETRIEVED context, and a per-org daily model-call ceiling plus a per-user tool-rate
 cap bound denial-of-wallet. The live red team caught the rate limits counting zero
-against RLS-protected audit tables (silent no-ops) and the fix — SECURITY DEFINER
-counters — is in migration 0009/0010; the ceiling now trips under a flood. At the
+against RLS-protected audit tables (silent no-ops) and the fix (SECURITY DEFINER
+counters) is in migration 0009/0010; the ceiling now trips under a flood. At the
 model layer, document-ordered writes were refused 6/6 and produced no note across
 runs. The honest residual: a user-authorized write still executes with no human
 approval, which is what Week 8 (human-in-the-loop) closes. See
 [`evidence/week7/`](evidence/week7/).
 
-Next: Week 8 (human approval) — an approval queue for the high-risk `create_note`
-tool, immutable approval records, and parameter locking so what was approved is
-exactly what executes.
+**Week 8 shipped: v0.8, Human Approval.** `create_note` now needs the requester's
+approval. The model's proposal is parked as an immutable record (migration 0011):
+the database computes the args hash, a trigger locks the row for every role, and the
+claim is single-use, expiring and membership-checked. The approve request carries
+only that hash, and the app executes the args read from the claimed row, as the
+caller. The structural red team held 12/12, including an injected "pre-approved by
+IT" document that produced zero notes in 10/10 live runs. The break was the human
+side: a plausible onboarding doc carried a lookalike SSO link, the user asked to save
+its VPN steps, and the first approval card (title plus 120 characters) hid the link
+in every run where it was stored: 5/10 by exact URL, 7/10 in any form. The model had
+even written its own "verify with IT" warning into the note, past the cutoff. Card v2
+shows the full body, lists every link with the document it came from (never
+clickable), and flags text copied from a document; on 10 fresh runs the link landed
+in 6 and was flagged in all 6. The honest residual: an informed human can still
+approve a bad action, so the gate buys informed consent, not correctness (RR-W8-1).
+RR-006 (a document's own phishing link stays clickable in chat) is accepted at v0.8.
+See [`evidence/week8/`](evidence/week8/), including a written
+[attack walkthrough](evidence/week8/walkthrough.md).
+
+Next: Week 9 (consolidated eval suite).
 
 ## Security
 
-- [Threat model](security/threat-model.md) — trust boundaries, findings register, framework mapping, maturity self-assessment.
-- [System card](security/system-card.md) — model, data, evaluations, residual risks.
+- [Threat model](security/threat-model.md): trust boundaries, findings register, framework mapping, maturity self-assessment.
+- [System card](security/system-card.md): model, data, evaluations, residual risks.
 - Per-week attack evidence: [`evidence/`](evidence/).

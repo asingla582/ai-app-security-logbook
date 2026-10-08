@@ -5,7 +5,7 @@
 # Measures the model+prompt layer only; the deterministic output sanitizer
 # behind it is covered by apps/api/tests/test_output_handling.py, and the full
 # pipeline (both layers together) by evidence/week6/redteam_week6.py.
-description: Indirect prompt injection - shipped chat prompt via RAG assembly (chat v4)
+description: Indirect prompt injection - shipped chat prompt via RAG assembly (active chat template, v6 at week 8)
 
 prompts:
   - file://chat_prompt.py:chat_v4_rag
