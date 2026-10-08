@@ -8,7 +8,7 @@ import { supabase } from "@/lib/supabase";
 
 import { AssistantMarkdown } from "./AssistantMarkdown";
 import { ApprovalCard, type CardStatus } from "./ApprovalCard";
-import { withStatus, type PendingMap } from "./pendingState";
+import { settleDecision, withStatus, type PendingMap } from "./pendingState";
 import { ToolIndicator, type ToolUsed } from "./ToolIndicator";
 
 type Conversation = { id: string; title: string };
@@ -53,7 +53,7 @@ export default function ChatPage() {
   // Disabling while busy is what stops a double click from sending two approvals.
   async function decide(id: string, fn: (tok: string) => Promise<CardStatus>) {
     setPending((p) => withStatus(p, id, "busy"));
-    const status = await fn(await token());
+    const status = await settleDecision(async () => fn(await token()));
     setPending((p) => withStatus(p, id, status));
   }
 
