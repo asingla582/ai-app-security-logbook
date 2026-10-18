@@ -731,6 +731,9 @@ def main(argv=None) -> int:
     if args.committed and (args.promptfoo or args.repeat is not None):
         ap.error("--committed takes the model results and repeat from the committed file;"
                  " do not pass --promptfoo or --repeat with it")
+    if args.committed and args.write_model_evidence:
+        ap.error("--write-model-evidence is for live runs: committed results are never"
+                 " re-stamped as new evidence")
 
     missing_sources: list[str] = []
 

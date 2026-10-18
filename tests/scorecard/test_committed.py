@@ -370,3 +370,12 @@ def test_app_prompt_hash_covers_every_app_module_the_eval_providers_load():
         todo |= _app_imports((app / f"{m}.py").read_text(), lazy=False)
     hashed = {Path(f).stem for f in sc.APP_PROMPT_FILES}
     assert closure and closure - hashed == set()
+
+
+def test_committed_evidence_cannot_be_rewritten_as_new_evidence(tmp_path):
+    """Reading committed evidence and writing model evidence in one call could re-stamp
+    old results with a new header. The scorer refuses the combination."""
+    with pytest.raises(SystemExit):
+        sc.main(["--committed", str(tmp_path / "a.json"),
+                 "--write-model-evidence", str(tmp_path / "b.json")])
+    assert not (tmp_path / "b.json").exists()
