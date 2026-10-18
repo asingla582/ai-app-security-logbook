@@ -61,7 +61,8 @@ jobs:
         with:
           name: scorecard
           path: .scorecard/
-          if-no-files-found: warn
+          include-hidden-files: true
+          if-no-files-found: error
 
   web:
     runs-on: ubuntu-latest
