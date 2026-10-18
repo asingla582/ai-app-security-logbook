@@ -2,7 +2,7 @@
 
 # Python for the scorecard targets. CI passes PYTHON=python.
 PYTHON ?= apps/api/.venv/bin/python
-SCORECARD_EVENT ?= local
+SCORECARD_EVENT ?=
 SCORECARD_OUT ?= .scorecard
 
 # Prepare a fresh clone: start Supabase, fill .env with its local keys, and build
@@ -103,15 +103,15 @@ trivy:
 	docker run --rm -v "$$PWD":/src aquasec/trivy:0.76.0 fs --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 --format json -o /src/$(TRIVY_OUT) /src
 
 # One command runs every suite and scores them: evidence/week9/scorecard.md|json at repeat 10.
-# The event comes from SCORECARD_EVENT (local, push, pr, fork_pr).
+# The event comes from SCORECARD_EVENT (local, push, pull_request, fork_pr); empty means detect from GitHub's env, else local.
 scorecard:
 	mkdir -p evidence/week9
-	if [ -f .env ]; then set -a; . ./.env; set +a; fi; $(PYTHON) scripts/scorecard.py run --repeat 10 --out evidence/week9 --event $(SCORECARD_EVENT)
+	if [ -f .env ]; then set -a; . ./.env; set +a; fi; $(PYTHON) scripts/scorecard.py run --repeat 10 --out evidence/week9 $(if $(SCORECARD_EVENT),--event $(SCORECARD_EVENT))
 
 # Same at repeat 3 for CI; output goes to $(SCORECARD_OUT) (gitignored).
 scorecard-ci:
 	mkdir -p $(SCORECARD_OUT)
-	if [ -f .env ]; then set -a; . ./.env; set +a; fi; $(PYTHON) scripts/scorecard.py run --repeat 3 --out $(SCORECARD_OUT) --event $(SCORECARD_EVENT)
+	if [ -f .env ]; then set -a; . ./.env; set +a; fi; $(PYTHON) scripts/scorecard.py run --repeat 3 --out $(SCORECARD_OUT) $(if $(SCORECARD_EVENT),--event $(SCORECARD_EVENT))
 
 # The full CI gate: scorecard, then the web checks.
 ci: scorecard-ci

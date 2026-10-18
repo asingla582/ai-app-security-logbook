@@ -43,12 +43,30 @@ path_repeat = [3]
 @pytest.fixture
 def fake(monkeypatch, tmp_path):
     calls: list[list[str]] = []
-    state = {"docker": True, "dirty": False}
+    state = {"docker": True, "dirty": False, "fail": {}, "bad_pf": False}
+
+    def name_of(cmd):
+        if "pytest" in cmd:
+            return "pytest"
+        if "vitest" in cmd:
+            return "vitest"
+        if "eval" in cmd:
+            return "eval"
+        if cmd[:2] == ["make", "lint"]:
+            return "lint"
+        if cmd[:2] == ["make", "trivy"]:
+            return "trivy"
+        return None
 
     def run(cmd, **kw):
         cmd = [str(c) for c in cmd]
         calls.append(cmd)
-        ok = subprocess.CompletedProcess(cmd, 0, "", "")
+        mode = state["fail"].get(name_of(cmd))
+        if mode == "timeout":
+            raise subprocess.TimeoutExpired(cmd, 1)
+        if mode == "missing":
+            raise FileNotFoundError(cmd[0])
+        rc = mode if isinstance(mode, int) else 0
         if cmd[:2] == ["git", "status"]:
             return subprocess.CompletedProcess(cmd, 0, " M x\n" if state["dirty"] else "", "")
         if cmd[:2] == ["git", "rev-parse"]:
@@ -61,18 +79,24 @@ def fake(monkeypatch, tmp_path):
             _vitest(next(c.split("=", 1)[1] for c in cmd if c.startswith("--outputFile=")))
         if "eval" in cmd:
             path_repeat[0] = int(cmd[cmd.index("--repeat") + 1])
-            _promptfoo(cmd[cmd.index("-o") + 1], cmd[cmd.index("-c") + 1])
-        return ok
+            if state["bad_pf"]:
+                Path(cmd[cmd.index("-o") + 1]).write_text("{not json")
+            else:
+                _promptfoo(cmd[cmd.index("-o") + 1], cmd[cmd.index("-c") + 1])
+        return subprocess.CompletedProcess(cmd, rc, "", "")
 
     monkeypatch.setattr(sc.subprocess, "run", run)
     monkeypatch.setattr(sc.shutil, "which", lambda n: "/usr/bin/" + n)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
     monkeypatch.setenv("PYTHON", "python")
+    monkeypatch.delenv("GITHUB_EVENT_NAME", raising=False)
+    monkeypatch.delenv("GITHUB_EVENT_PATH", raising=False)
     return calls, state, tmp_path
 
 
 def _go(tmp_path, event="push", repeat=3):
-    code = sc.main(["run", "--repeat", str(repeat), "--out", str(tmp_path / "o"), "--event", event])
+    ev = ["--event", event] if event else []
+    code = sc.main(["run", "--repeat", str(repeat), "--out", str(tmp_path / "o"), *ev])
     md = (tmp_path / "o" / "scorecard.md").read_text()
     js = json.loads((tmp_path / "o" / "scorecard.json").read_text())
     return code, md, js
@@ -142,3 +166,130 @@ def test_runner_invokes_each_source_once(fake):
         assert c[c.index("--repeat") + 1] == "3" and "-o" in c
         assert "--no-cache" in c and "--no-share" in c and "promptfoo@0.120.27" in c
     assert calls.count(["make", "lint"]) == 1 and calls.count(["make", "trivy"]) == 1
+
+
+def _rows(js):
+    return {r["key"]: r for r in js["rows"]}
+
+
+def test_stale_outputs_are_never_scored(fake):
+    """Run 1 passes and leaves green files; in run 2 every source times out."""
+    _, state, tmp = fake
+    _, _, js1 = _go(tmp)
+    assert js1["verdict"] == "PASS"
+    state["fail"] = {k: "timeout" for k in ("pytest", "vitest", "eval", "lint", "trivy")}
+    code, _, js = _go(tmp)
+    assert js["verdict"] == "FAIL" and code == 1
+    rows = _rows(js)
+    assert all(rows[k]["ran"] is False for k in MODEL_KEYS)
+    assert rows["structural"]["ran"] is False
+
+
+def test_old_scorecard_removed_when_run_crashes(fake, monkeypatch):
+    _, _, tmp = fake
+    _go(tmp)
+    monkeypatch.setattr(sc, "main", lambda argv: (_ for _ in ()).throw(RuntimeError("boom")))
+    with pytest.raises(RuntimeError):
+        sc.run_main(["--repeat", "3", "--out", str(tmp / "o"), "--event", "push"])
+    assert not (tmp / "o" / "scorecard.md").exists()
+    assert not (tmp / "o" / "scorecard.json").exists()
+
+
+def test_stale_file_ignored_when_source_times_out(fake):
+    """Defense in depth: a stale file exists, but the source timed out."""
+    _, state, tmp = fake
+    state["fail"] = {"pytest": "timeout"}
+    seed = tmp / "o" / "raw"
+    seed.mkdir(parents=True)
+    _junit(seed / "pytest.xml")
+    _, _, js = _go(tmp)
+    assert js["verdict"] == "FAIL"
+    assert _rows(js)["structural"]["ran"] is False
+
+
+def test_pytest_exit_outside_0_1_is_not_run(fake):
+    _, state, tmp = fake
+    state["fail"] = {"pytest": 2}  # e.g. interrupted / usage error, though junit exists
+    _, _, js = _go(tmp)
+    assert js["verdict"] == "FAIL"
+    assert _rows(js)["structural"]["ran"] is False
+
+
+def test_launch_failure_of_vitest_fails(fake):
+    _, state, tmp = fake
+    state["fail"] = {"vitest": "missing"}
+    _, _, js = _go(tmp)
+    assert js["verdict"] == "FAIL"
+    gate = _rows(js)["approval_gate"]
+    assert gate["verdict"] == "FAIL" and any("MISSING" in f for f in gate["failures"])
+
+
+def test_promptfoo_timeout_fails_model_rows(fake):
+    _, state, tmp = fake
+    state["fail"] = {"eval": "timeout"}
+    _, _, js = _go(tmp)
+    rows = _rows(js)
+    assert js["verdict"] == "FAIL"
+    assert all(rows[k]["ran"] is False for k in MODEL_KEYS)
+
+
+def test_ruff_nonzero_fails_hygiene(fake):
+    _, state, tmp = fake
+    state["fail"] = {"lint": 1}
+    _, _, js = _go(tmp)
+    hyg = _rows(js)["platform_hygiene"]
+    assert js["verdict"] == "FAIL" and hyg["verdict"] == "FAIL"
+
+
+def test_ruff_launch_failure_is_not_run(fake):
+    _, state, tmp = fake
+    state["fail"] = {"lint": "missing"}
+    _, _, js = _go(tmp)
+    assert js["verdict"] == "FAIL"
+    assert _rows(js)["platform_hygiene"]["verdict"] == "FAIL"
+
+
+def test_invalid_promptfoo_report_fails(fake):
+    _, state, tmp = fake
+    state["bad_pf"] = True
+    _, _, js = _go(tmp)
+    assert js["verdict"] == "FAIL"
+    assert "unreadable_sources" in js["meta"]
+
+
+def test_promptfoo_nonzero_exit_is_noted(fake):
+    _, state, tmp = fake
+    state["fail"] = {"eval": 100}
+    _, _, js = _go(tmp)
+    assert "promptfoo" in js["meta"]["notes"] and "100" in js["meta"]["notes"]
+
+
+def _gh_event(tmp, head, base="o/r"):
+    p = tmp / "event.json"
+    p.write_text(json.dumps({"pull_request": {"head": {"repo": {"full_name": head}},
+                                              "base": {"repo": {"full_name": base}}}}))
+    return str(p)
+
+
+def test_event_resolved_from_github_fork_pr(fake, monkeypatch):
+    calls, _, tmp = fake
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", _gh_event(tmp, "fork/r"))
+    # a key may exist on a fork run; secrets must not be used for model suites anyway
+    code, _, js = _go(tmp, event="")
+    assert js["event"] == "fork_pr"
+    assert not any("eval" in c for c in calls)
+    assert js["verdict"].startswith("PASS (partial") and code == 0
+
+
+def test_event_resolved_from_github_push(fake, monkeypatch):
+    _, _, tmp = fake
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+    _, _, js = _go(tmp, event="")
+    assert js["event"] == "push"
+
+
+def test_event_defaults_local_without_github(fake):
+    _, _, tmp = fake
+    _, _, js = _go(tmp, event="")
+    assert js["event"] == "local"

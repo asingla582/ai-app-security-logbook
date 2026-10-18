@@ -560,13 +560,18 @@ def run_main(argv) -> int:
     ap = argparse.ArgumentParser(prog="scorecard.py run")
     ap.add_argument("--repeat", type=int, required=True)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--event", choices=["local", "push", "pr", "pull_request", "fork_pr"],
-                    default=os.environ.get("SCORECARD_EVENT", "local"))
+    ap.add_argument("--event", choices=["local", "push", "pull_request", "fork_pr"],
+                    default=os.environ.get("SCORECARD_EVENT") or None)
     args = ap.parse_args(argv)
+    event = args.event or detect_event()  # empty means: ask GitHub's env, else local
 
     out = Path(args.out).resolve()
     raw = out / "raw"
+    # Never score anything left by an earlier run: clear raw/ and the previous scorecard.
+    shutil.rmtree(raw, ignore_errors=True)
     raw.mkdir(parents=True, exist_ok=True)
+    for old in ("scorecard.md", "scorecard.json"):
+        (out / old).unlink(missing_ok=True)
     py = os.environ.get("PYTHON") or "apps/api/.venv/bin/python"
     if "/" in py:
         py = os.path.abspath(REPO / py)  # not resolve(): a venv python is a symlink
@@ -584,7 +589,7 @@ def run_main(argv) -> int:
     code, text = _sh([py, "-m", "pytest", "-q", "-o", "junit_family=xunit1",
                       f"--junitxml={junit}", *PYTEST_DIRS], env=env, timeout=TIMEOUTS["pytest"])
     log("pytest", code, text)
-    if junit.exists():
+    if code in (0, 1) and junit.exists():  # other codes: interrupted, usage error, timeout
         score_argv += ["--junit", str(junit)]
 
     # vitest
@@ -592,19 +597,19 @@ def run_main(argv) -> int:
     code, text = _sh(["npx", "vitest", "run", "--reporter=json", f"--outputFile={vit}"],
                      env=env, cwd=REPO / "apps" / "web", timeout=TIMEOUTS["vitest"])
     log("vitest", code, text)
-    if vit.exists():
+    if code not in (124, 127) and vit.exists():
         score_argv += ["--vitest", str(vit)]
 
     # platform hygiene: ruff, then Trivy (needs Docker; without it Trivy is not run)
     code, text = _sh(["make", "lint"], env=env, timeout=TIMEOUTS["lint"])
     log("ruff", code, text)
-    ruff = "passed" if code == 0 else "failed"
+    ruff = "passed" if code == 0 else "skipped" if code in (124, 127) else "failed"
     dcode, _ = _sh(["docker", "info"], env=env, timeout=60) if shutil.which("docker") else (127, "")
     if dcode == 0:
         code, text = _sh(["make", "trivy"], env=dict(env, TRIVY_OUT=".trivy.json"),
                          timeout=TIMEOUTS["trivy"])
         log("trivy", code, text)
-        trivy = "passed" if code == 0 else "failed"
+        trivy = "passed" if code == 0 else "skipped" if code in (124, 127) else "failed"
     else:
         notes.append("trivy not run: Docker unavailable")
         trivy = "skipped"
@@ -615,21 +620,21 @@ def run_main(argv) -> int:
     # Promptfoo model suites. No key: do not run them and say why. Omitting --promptfoo
     # (rather than --not-run) leaves each row's deterministic half to be scored normally;
     # on a required event the empty model half then FAILs the row.
-    if os.environ.get("ANTHROPIC_API_KEY"):
+    if os.environ.get("ANTHROPIC_API_KEY") and event != "fork_pr":
         for cat, cfg in PROMPTFOO_RUNS:
             rep = raw / f"promptfoo-{cat}.json"
             code, text = _sh(["npx", f"promptfoo@{PROMPTFOO_VERSION}", "eval", "-c", cfg,
                               "--no-cache", "--no-share", "--repeat", str(args.repeat),
                               "-o", str(rep)], env=env, timeout=TIMEOUTS["promptfoo"])
             # promptfoo exits non-zero when a case fails; the report is what counts.
-            (raw / f"promptfoo-{cat}.log").write_text(text)
-            if rep.exists():
+            log(f"promptfoo-{cat}", code, text)
+            if code not in (124, 127) and rep.exists():
                 score_argv += ["--promptfoo", f"{cat}={rep}"]
             else:
                 notes.append(f"promptfoo {cat} produced no report (exit {code})")
     else:
         notes.append("model suites not run: ANTHROPIC_API_KEY is not set"
-                     + ("" if args.event == "fork_pr" else " (required on this event, so FAIL)"))
+                     + ("" if event == "fork_pr" else " (required on this event, so FAIL)"))
 
     meta = {
         "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
@@ -643,7 +648,7 @@ def run_main(argv) -> int:
         meta["notes"] = "; ".join(notes)
     for k, v in meta.items():
         score_argv += ["--meta", f"{k}={v}"]
-    return main(score_argv + ["--repeat", str(args.repeat), "--event", args.event,
+    return main(score_argv + ["--repeat", str(args.repeat), "--event", event,
                               "--out", str(out)])
 
 
