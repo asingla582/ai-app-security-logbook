@@ -23,8 +23,8 @@ from scorecard_config import (
     FILE_MAP,
     FORK_PR_OPTIONAL,
     NAME_OVERRIDES,
+    PROMPTFOO_SOURCES,
     RESIDUAL_DESCRIPTION_PREFIX,
-    Category,
 )
 
 Outcome = Literal["passed", "failed", "skipped", "error"]
@@ -67,6 +67,8 @@ class Row:
     verdict: str
     failures: list[str] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)
+    attempts: int = 0
+    changed: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -80,10 +82,10 @@ class Scorecard:
 # ---------------------------------------------------------------- parsers
 
 def _junit_file(tc: ET.Element) -> str:
-    f = tc.get("file")
+    f = tc.get("file")  # the orchestrator runs pytest with junit_family=xunit1, so this is set
     if f:
         return f.replace("\\", "/")
-    # classname is the dotted module path, possibly ending in a class name.
+    # Fallback: classname is the dotted module path, possibly ending in a class name.
     parts = [p for p in (tc.get("classname") or "").split(".") if p]
     while parts and parts[-1][:1].isupper():
         parts.pop()
@@ -114,15 +116,24 @@ def parse_vitest_json(path) -> list[TestResult]:
     data = json.loads(Path(path).read_text())
     out: list[TestResult] = []
     for tr in data.get("testResults", []):
+        fname = tr.get("name", "").replace("\\", "/")
+        before = len(out)
         for a in tr.get("assertionResults", []):
             outcome: Outcome = _VITEST.get(a.get("status"), "skipped")  # type: ignore[assignment]
-            out.append(
-                TestResult(
-                    tr.get("name", "").replace("\\", "/"),
-                    a.get("fullName") or a.get("title") or "",
-                    outcome,
-                )
-            )
+            out.append(TestResult(fname, a.get("fullName") or a.get("title") or "", outcome))
+        # A suite that fails to import has status "failed" and no assertions: that is
+        # a failure, not an absence.
+        if tr.get("status") == "failed" and not any(
+            r.outcome in ("failed", "error") for r in out[before:]
+        ):
+            out.append(TestResult(fname, "<suite failed to run>", "error"))
+    broken = (
+        data.get("success") is False
+        or data.get("numFailedTestSuites", 0)
+        or data.get("numRuntimeErrorTestSuites", 0)
+    )
+    if broken and not any(r.outcome in ("failed", "error") for r in out):
+        out.append(TestResult("vitest", "<run reported failure>", "error"))
     return out
 
 
@@ -158,69 +169,128 @@ def parse_promptfoo(path, category) -> list[CaseResult]:
 
 # ------------------------------------------------------------ categorizing
 
-def _lookup(file: str, file_map: dict[str, str]) -> str | None:
+def _match(f: str, p: str) -> bool:
+    return f == p or p.endswith("/" + f) or f.endswith("/" + p)
+
+
+def _resolve_path(file: str, paths) -> str | None:
+    """The FILE_MAP-style path a result's file refers to (suffix match, most specific)."""
     f = file.replace("\\", "/")
-    if f in file_map:
-        return file_map[f]
-    hits = [
-        p for p in file_map
-        if p.endswith("/" + f) or f.endswith("/" + p)
-    ]
-    # Prefer the most specific (longest) path if several match.
-    return file_map[max(hits, key=len)] if hits else None
+    hits = [p for p in paths if _match(f, p)]
+    return max(hits, key=len) if hits else None
 
 
 def categorize(results, file_map=FILE_MAP, overrides=NAME_OVERRIDES) -> dict[str, list[TestResult]]:
-    """Every result lands in exactly one bucket. Name prefix wins, then file, then
-    other_deterministic."""
+    """Every result lands in exactly one bucket. A (file, prefix) override wins, then
+    the file map, then other_deterministic."""
     buckets: dict[str, list[TestResult]] = {}
     for r in results:
-        key = next((k for prefix, k in overrides if r.name.startswith(prefix)), None)
-        key = key or _lookup(r.file, file_map) or FALLBACK_KEY
+        key = next(
+            (k for f, prefix, k in overrides if _match(r.file.replace("\\", "/"), f)
+             and r.name.startswith(prefix)),
+            None,
+        )
+        if key is None:
+            path = _resolve_path(r.file, file_map)
+            key = file_map[path] if path else FALLBACK_KEY
         buckets.setdefault(key, []).append(r)
     return buckets
 
 
 # ----------------------------------------------------------------- scoring
 
-def _row(cat: Category, items, ran_flag: bool, required: bool) -> Row:
+def _row(cat, items, ran_flag, event, repeat, expected, paths, missing) -> Row:
     tests = [i for i in items if isinstance(i, TestResult)]
     cases = [i for i in items if isinstance(i, CaseResult)]
+    if cases and repeat is None:
+        raise ValueError("score() needs the expected repeat N when promptfoo cases are present")
+    watch = cat.kind == "watch"
+    has_half = cat.key in FORK_PR_OPTIONAL  # has a Promptfoo half
+    model_required = has_half and event != "fork_pr"
     executed = [t for t in tests if t.outcome != "skipped"]
+    hard: list[str] = []
+    changed: list[str] = []
+
+    # Deterministic half: required on every event, scored independently of Promptfoo.
+    for t in tests:
+        label = f"{t.file}::{t.name} ({t.outcome})"
+        if t.outcome == "passed":
+            continue
+        if watch and t.outcome in ("failed", "error"):
+            changed.append(label)  # a pinned behavior moved: report, do not gate
+        else:
+            hard.append(label)  # failed, errored or skipped (skipped is not run)
+    hard += [f"MISSING: {m} contributed no executed result" for m in missing]
+    det_expected = (not has_half) or bool(paths) or bool(tests)
+    det_ran = bool(ran_flag) and len(executed) > 0
+    if det_expected and not det_ran:
+        hard.append("NOT RUN: no executed deterministic result")
+
+    # Promptfoo half.
+    for c in cases:
+        why = None
+        if c.attempts == 0:
+            why = "no attempts"
+        elif c.errors > 0:
+            why = f"{c.errors} errored attempt(s)"
+        elif c.attempts != repeat:
+            why = f"{c.attempts} attempts, expected {repeat}"
+        if why:
+            hard.append(f"{c.key} ({why})")
+        elif c.passes < c.attempts:
+            msg = f"{c.key} ({c.passes}/{c.attempts} passes)"
+            (changed if watch else hard).append(msg)
+    n_exp = (expected or {}).get(cat.key)
+    if n_exp is not None and cases and len(cases) < n_exp:
+        hard.append(f"PARTIAL RUN: {len(cases)} of {n_exp} expected cases")
+    model_ran = bool(ran_flag) and any(c.attempts - c.errors > 0 for c in cases)
+    if model_required and not model_ran:
+        hard.append("NOT RUN: no completed Promptfoo attempts")
+
+    ran = (det_ran or not det_expected) and (model_ran if has_half else True)
     attempts = sum(c.attempts for c in cases)
-    runs = len(executed) + attempts
+    passed = sum(t.outcome == "passed" for t in tests) + sum(
+        c.attempts == repeat and c.passes == c.attempts and c.errors == 0 for c in cases
+    )
     total = len(tests) + len(cases)
-    passed = sum(t.outcome == "passed" for t in tests) + sum(c.passed for c in cases)
-    failures = [
-        f"{t.file}::{t.name} ({t.outcome})" for t in tests if t.outcome != "passed"
-    ] + [
-        f"{c.key} ({c.passes}/{c.attempts} passes, {c.errors} errors)"
-        for c in cases if not c.passed
-    ]
-    if cat.kind == "model":
-        has_run = attempts > 0
+    runs = repeat if cases else len(executed)
+    if hard:
+        verdict = "FAIL"
+    elif not ran:
+        verdict = "NOT RUN"  # only reachable for the fork-PR model half
+    elif changed:
+        verdict = "CHANGED"
     else:
-        has_run = len(executed) > 0 or attempts > 0
-    ran = bool(ran_flag) and has_run
-    sources = sorted({t.file for t in tests if t.file})
-
-    if not ran:
-        verdict = "FAIL" if required else "NOT RUN"
-    elif cat.kind == "watch":
-        verdict = "CHANGED" if failures else "PASS"
-    else:
-        verdict = "PASS" if total > 0 and passed == total else "FAIL"
-    return Row(cat.key, cat.title, cat.kind, cat.threshold, required, ran, runs,
-               passed, total, verdict, failures, sources)
+        verdict = "PASS"
+    sources = sorted(paths)
+    if cat.key in PROMPTFOO_SOURCES:
+        sources.append(PROMPTFOO_SOURCES[cat.key])
+    return Row(cat.key, cat.title, cat.kind, cat.threshold,
+               cat.required and not (event == "fork_pr" and has_half),
+               ran, runs, passed, total, verdict, hard, sources, attempts, changed)
 
 
-def score(categories, buckets, ran_flags, event, meta=None) -> Scorecard:
+def score(categories, buckets, ran_flags, event, meta=None, repeat=None,
+          expected_cases=None, file_map=FILE_MAP) -> Scorecard:
+    """`repeat` is the N every Promptfoo case must have run. `expected_cases` maps a
+    category key to how many cases its run should contain. Every file in `file_map`
+    must contribute at least one executed result, or its row FAILs."""
     ran_flags = ran_flags or {}
+    paths_by_key: dict[str, list[str]] = {}
+    for path, key in file_map.items():
+        paths_by_key.setdefault(key, []).append(path)
+    seen = {
+        _resolve_path(t.file, file_map)
+        for items in buckets.values() for t in items
+        if isinstance(t, TestResult) and t.outcome != "skipped"
+    }
     rows = []
     for cat in categories:
-        required = cat.required and not (event == "fork_pr" and cat.key in FORK_PR_OPTIONAL)
-        rows.append(_row(cat, buckets.get(cat.key, []), ran_flags.get(cat.key, True), required))
-    if any(r.verdict == "FAIL" for r in rows):  # a non-required row only FAILs if it ran
+        paths = paths_by_key.get(cat.key, [])
+        missing = [p for p in paths if p not in seen]
+        rows.append(_row(cat, buckets.get(cat.key, []), ran_flags.get(cat.key, True),
+                         event, repeat, expected_cases, paths, missing))
+    if any(r.verdict == "FAIL" for r in rows):
         verdict = "FAIL"
     elif event == "fork_pr" and any(r.key in FORK_PR_OPTIONAL and not r.ran for r in rows):
         verdict = PARTIAL_FORK
@@ -239,9 +309,9 @@ def render_json(sc: Scorecard) -> dict:
         "rows": [
             {
                 "key": r.key, "title": r.title, "kind": r.kind, "required": r.required,
-                "ran": r.ran, "runs": r.runs, "passed": r.passed, "total": r.total,
-                "threshold": r.threshold, "verdict": r.verdict,
-                "failures": r.failures, "sources": r.sources,
+                "ran": r.ran, "runs": r.runs, "attempts": r.attempts, "passed": r.passed,
+                "total": r.total, "threshold": r.threshold, "verdict": r.verdict,
+                "failures": r.failures, "changed": r.changed, "sources": r.sources,
             }
             for r in sc.rows
         ],
@@ -254,15 +324,16 @@ def render_md(sc: Scorecard) -> str:
     lines += [f"- {k}: {v}" for k, v in sc.meta.items()]
     lines += [
         "",
-        "| Category | Kind | Ran | Runs | Passed/Total | Threshold | Verdict |",
-        "|---|---|---|---|---|---|---|",
+        "| Category | Kind | Ran | Runs | Passed/Total | Threshold | Verdict | Sources |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for r in sc.rows:
+        src = ", ".join(x.rsplit("/", 1)[-1] for x in r.sources) or "none"
         lines.append(
             f"| {r.title} | {r.kind} | {'yes' if r.ran else 'NO'} | {r.runs} | "
-            f"{r.passed}/{r.total} | {r.threshold} | {r.verdict} |"
+            f"{r.passed}/{r.total} | {r.threshold} | {r.verdict} | {src} |"
         )
-    detail = [r for r in sc.rows if r.failures or not r.ran]
+    detail = [r for r in sc.rows if r.failures or r.changed or not r.ran]
     if detail:
         lines += ["", "## Details", ""]
         for r in detail:
@@ -270,6 +341,7 @@ def render_md(sc: Scorecard) -> str:
             if not r.ran:
                 lines.append("- NOT RUN (skipped or no results). Not run is never a pass.")
             lines += [f"- {f}" for f in r.failures]
+            lines += [f"- CHANGED: {c}" for c in r.changed]
             lines.append("")
     return "\n".join(lines) + "\n"
 
@@ -300,25 +372,44 @@ def main(argv=None) -> int:
     ap.add_argument("--promptfoo", action="append", default=[], metavar="CATEGORY=PATH")
     ap.add_argument("--not-run", action="append", default=[], metavar="KEY",
                     help="mark a category as not run (e.g. trivy unavailable)")
+    ap.add_argument("--repeat", type=int, default=None, help="N each Promptfoo case must have run")
+    ap.add_argument("--expected-cases", action="append", default=[], metavar="CATEGORY=COUNT")
     ap.add_argument("--event", default=None)
     ap.add_argument("--meta", action="append", default=[], metavar="K=V")
     ap.add_argument("--out", default=None, help="directory for scorecard.md / scorecard.json")
     args = ap.parse_args(argv)
 
+    missing_sources: list[str] = []
+
+    def load(fn, path, *extra):
+        try:
+            return fn(path, *extra)
+        except (OSError, ValueError, KeyError, ET.ParseError) as e:
+            missing_sources.append(f"{path} ({type(e).__name__})")
+            return []
+
     results: list[TestResult] = []
     for p in args.junit:
-        results += parse_junit(p)
+        results += load(parse_junit, p)
     for p in args.vitest:
-        results += parse_vitest_json(p)
+        results += load(parse_vitest_json, p)
     buckets: dict[str, list] = {k: list(v) for k, v in categorize(results).items()}
     for spec in args.promptfoo:
         cat, _, path = spec.partition("=")
-        buckets.setdefault(cat, []).extend(parse_promptfoo(path, cat))
+        buckets.setdefault(cat, []).extend(load(parse_promptfoo, path, cat))
         if cat == "direct_injection":  # the residual cases live in the same run
-            buckets.setdefault("known_residuals", []).extend(parse_promptfoo(path, "known_residuals"))
+            buckets.setdefault("known_residuals", []).extend(load(parse_promptfoo, path, "known_residuals"))
+    if args.promptfoo and args.repeat is None:
+        ap.error("--repeat N is required when --promptfoo is given")
+    expected = {k: int(v) for k, _, v in (e.partition("=") for e in args.expected_cases)}
     flags = {k: False for k in args.not_run}
     meta = dict(m.partition("=")[::2] for m in args.meta)
-    sc = score(CATEGORIES, buckets, flags, args.event or detect_event(), meta)
+    if missing_sources:
+        meta["unreadable_sources"] = "; ".join(missing_sources)
+    sc = score(CATEGORIES, buckets, flags, args.event or detect_event(), meta,
+               repeat=args.repeat, expected_cases=expected)
+    if missing_sources:
+        sc.verdict = "FAIL"  # an unreadable source is never a pass
 
     md = render_md(sc)
     if args.out:

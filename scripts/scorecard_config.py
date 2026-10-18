@@ -46,6 +46,8 @@ PROMPTFOO_SOURCES = {
     "direct_injection": "evals/promptfooconfig.yaml",
     "indirect_injection": "evals/promptfooconfig.indirect.yaml",
     "tool_injection": "evals/promptfooconfig.tools.yaml",
+    # Residual cases ride in the direct-injection run (the config includes this file).
+    "known_residuals": "evals/known-residuals.yaml",
 }
 
 # Promptfoo cases whose description starts with this are routed to known_residuals
@@ -103,7 +105,8 @@ FILE_MAP: dict[str, str] = {
     "tests/scorecard/test_scorecard.py": "other_deterministic",
 }
 
-# Test-name prefix -> category key. Applied before FILE_MAP.
-NAME_OVERRIDES: list[tuple[str, str]] = [
-    ("test_residual_", "known_residuals"),
+# (file, test-name prefix, category key). Scoped to a file so a stray test elsewhere
+# that happens to share the prefix is not swept into a WATCH row. Applied before FILE_MAP.
+NAME_OVERRIDES: list[tuple[str, str, str]] = [
+    ("apps/api/tests/test_redaction.py", "test_residual_", "known_residuals"),
 ]
