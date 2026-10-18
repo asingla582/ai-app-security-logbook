@@ -44,11 +44,13 @@ make ci              # scorecard-ci, then the web lint, tests and build
 
 One run executes pytest (`apps/api/tests`, `tests/rls`, `tests/scorecard`), vitest,
 ruff, Trivy (through Docker) and the three Promptfoo configs above, then scores the
-results into twelve rows. The runner reads `.env` if it exists, so a local run needs
-`ANTHROPIC_API_KEY` there, plus Docker and the local Supabase stack. A recorded run
-at repeat 10 is about 380 paid model calls. Raw output goes to `raw/` under the
-output directory, which is gitignored; outputs from an earlier run are deleted first,
-so nothing stale is scored.
+results into twelve rows. The `make scorecard` and `make scorecard-ci` targets source
+`.env` if it exists, so a local run needs `ANTHROPIC_API_KEY` there, plus Docker and
+the local Supabase stack. A recorded run at repeat 10 is about 380 chat calls (200
+direct, 120 indirect, 60 tools) plus the LLM-grader calls for the rubric cases; run
+2's raw Promptfoo reports (gitignored) hold 80 graded rubric results (50 direct, 30
+indirect). Raw output goes to `raw/` under the output directory, which is gitignored;
+outputs from an earlier run are deleted first, so nothing stale is scored.
 
 Thresholds live in `scripts/scorecard_config.py` and were fixed before the first run.
 A miss is reported, never re-thresholded.

@@ -250,7 +250,10 @@ not an exact technique ID.
   tests (`apps/api/tests/test_trajectories.py`) read `tool_calls` and
   `pending_actions` from the database and assert the whole sequence.
 - **Measurement:** `evidence/week9/scorecard.md` (run 2, repeat 10, PASS on every
-  row) and `scorecard-run1-fail.md` (run 1, FAIL, kept as recorded).
+  row) and `scorecard-run1-fail.md` (run 1, FAIL, kept as recorded). Model rows require
+  every case in every run, but six of those cases (three direct, three indirect) are
+  judged by an LLM grader (`llm-rubric`, `claude-haiku-4-5-20251001`), so those rows are
+  not fully deterministic; the cases are listed in `evals/README.md`.
 - **OWASP:** cross-cutting · **NIST:** Measure · **ATLAS:** none (process control).
 - **Residuals:** the CI gate needs the author's `ANTHROPIC_API_KEY` repository
   secret; without it the job fails on every push and same-repo PR, by design. The
@@ -569,7 +572,9 @@ ran, and "not run" is never a pass.
   unchanged for the pinned known residuals, 0 findings for platform hygiene. The
   header records commit, dirty flag, model id (from `app.config.CHAT_MODEL`),
   template ref (from `app.prompting.CHAT_TEMPLATE.ref`), Promptfoo version and repeat
-  count. Recorded runs use repeat 10; CI uses repeat 3. Maps to NIST **Measure**.
+  count. Recorded runs use repeat 10; CI uses repeat 3. Six model-row cases are judged
+  by an LLM grader rather than by code, so "every case, every run" there rests partly
+  on a second model's judgment (see `evals/README.md`). Maps to NIST **Measure**.
 - **Trajectory tests (new).** `apps/api/tests/test_trajectories.py` (7 tests) reads
   `tool_calls` and `pending_actions` from the database and asserts the ordered
   sequence for a read tool, an approved, denied and expired write, an injected

@@ -80,9 +80,8 @@ between runs and human annotation.
   reading transcripts, which is the step that caught this project's detector
   bugs; tracing that Week 10 (observability) may want anyway.
 - Against, for this project: results live in a vendor account rather than in the
-  repo, so a reader of the logbook cannot check them from a clone; it needs an
-  account and an API key, which is the same kind of secret dependency that kept the
-  old CI gate from running; the eval inputs and outputs (document text, replies) go
+  repo, so a reader of the logbook cannot check them from a clone; the eval inputs
+  and outputs (document text, replies) go
   to a third vendor, after Anthropic and OpenAI. None of this is a defect in those
   products; it is a mismatch with a project whose evidence has to be public and
   reproducible.
@@ -111,13 +110,19 @@ between runs and human annotation.
 
 - **Every number is checkable from a clone.** The recorded scorecard names the
   commit, model id, template ref, Promptfoo version and repeat count, and `make
-  scorecard` reproduces it, given a key and about 380 paid model calls.
+  scorecard` reproduces it, given a key, about 380 chat calls and the LLM-grader
+  calls for the rubric cases (80 graded rubric results in run 2).
 - **A failing run stays on the record.** Run 1 failed (Indirect injection 22/23) and is
   kept as `evidence/week9/scorecard-run1-fail.md`. The detector fix and run 2 are
   separate, dated commits. A dashboard that keeps only the latest run would make this
   easier to lose.
 - **No history view.** Comparing runs means diffing committed files. That is
   workable at one recorded run per week and would not be at many runs a day.
+- **Model rows are not fully deterministic.** The threshold is every case in every
+  run, but six cases (three direct, three indirect) are judged by an LLM grader
+  (`llm-rubric`, `claude-haiku-4-5-20251001`) rather than by code. A pass on those
+  cases rests partly on a second model's judgment. The cases are listed in
+  `evals/README.md`.
 - **Reading transcripts stays manual.** The scorecard scores what each detector
   reports. RR-W9-3 was a detector scoring a mention as an exfiltration, found only by
   reading the replies. Nothing in this decision automates that step.

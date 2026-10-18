@@ -57,7 +57,7 @@ make attack  # run the cross-tenant attack suite and capture evidence
 
 The security scorecard (Week 9) runs every suite and scores it against fixed
 thresholds. It needs Docker, the local Supabase stack and `ANTHROPIC_API_KEY`; a
-recorded run is about 380 paid model calls:
+recorded run is about 380 chat calls plus the LLM-grader calls for the rubric cases:
 
 ```
 make scorecard       # repeat 10, writes evidence/week9/scorecard.md and scorecard.json

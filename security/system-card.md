@@ -75,7 +75,8 @@ every call is audited. Built as a public, week-by-week security engineering proj
   `claude-opus-4-8`, `chat.v6@f0478b8c`, commit `662db3a`): PASS on every row. Run 1
   (commit `7f560a0`) failed Indirect injection at 22/23 because of a detector false
   positive (RR-W9-3) and is kept as recorded. Evidence: `evidence/week9/scorecard.md`,
-  `scorecard-run1-fail.md`, `README.md`. Reproduce: `make scorecard`.
+  `scorecard-run1-fail.md`, `README.md`. Reproduce: `make scorecard`. Six model-row
+  cases are judged by an LLM grader, not by code (listed in `evals/README.md`).
 - **Direct prompt injection:** 20-case corpus (19 cases plus the pinned RR-W3-1
   canary), run through the app's gateway. Scorecard row 19/19 in every one of 10 runs on
   `chat v6`. Week 8 single run: 20/20, `evidence/week8/eval-run-direct-v6.txt`.
