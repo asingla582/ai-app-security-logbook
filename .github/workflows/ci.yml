@@ -6,13 +6,22 @@ on:
   pull_request:
 
 jobs:
-  api:
+  scorecard:
+    # One self-contained gate. Runs ruff, pytest (incl. RLS), vitest, the model
+    # suites and Trivy, then scores them. It either runs or fails loudly: there
+    # is no skip path. On fork PRs (no secrets) the runner marks the model
+    # categories not required; on push and same-repo PRs a missing key FAILs.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
       - uses: supabase/setup-cli@v1
         with:
           version: latest
@@ -34,17 +43,25 @@ jobs:
               for k, v in out.items():
                   f.write(f"{k}={v}\n")
           '
-      - name: Install, lint, and run API tests
-        working-directory: apps/api
-        run: |
-          python -m pip install -e ".[dev]"
-          ruff check .
-          pytest -q
-      - name: Database-layer RLS tests
-        # Run from the repo root so the tests/rls suite is included in the gate.
-        # These prove tenant isolation at the database, independent of the API,
-        # and must not be left out of CI.
-        run: python -m pytest -q tests/rls
+      - name: Install API (ruff, pytest, provider deps)
+        run: python -m pip install -e "apps/api[dev]"
+      - name: Install web dependencies (vitest)
+        working-directory: apps/web
+        run: npm ci
+      - name: Scorecard
+        # The runner works out push / pull_request / fork_pr itself from
+        # GITHUB_EVENT_NAME and the event payload.
+        env:
+          PYTHON: python
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: make scorecard-ci
+      - name: Upload scorecard
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scorecard
+          path: .scorecard/
+          if-no-files-found: warn
 
   web:
     runs-on: ubuntu-latest
@@ -62,34 +79,6 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
-
-  evals:
-    # Model-in-the-loop direct-injection gate. Blocks on any corpus regression.
-    # Skips when the key secret is absent (fork PRs); the structural guarantees
-    # (user input cannot reach the system slot) still gate via the api job's
-    # test_prompting.py, which needs no key.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install provider dependencies
-        # The eval calls the app's own gateway (evals/api_provider.py).
-        run: python -m pip install anthropic python-dotenv
-      - name: Direct-injection eval gate
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          PROMPTFOO_PYTHON: python3
-        run: |
-          if [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "ANTHROPIC_API_KEY secret not available; skipping model-in-the-loop eval."
-            exit 0
-          fi
-          npx promptfoo@0.120.27 eval -c evals/promptfooconfig.yaml --no-cache --no-share
 
   security:
     runs-on: ubuntu-latest
