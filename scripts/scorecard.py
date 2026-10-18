@@ -199,7 +199,7 @@ def categorize(results, file_map=FILE_MAP, overrides=NAME_OVERRIDES) -> dict[str
 
 # ----------------------------------------------------------------- scoring
 
-def _row(cat, items, ran_flag, event, repeat, expected, paths, missing) -> Row:
+def _row(cat, items, ran_flag, event, repeat, expected, paths, missing, pins=False) -> Row:
     tests = [i for i in items if isinstance(i, TestResult)]
     cases = [i for i in items if isinstance(i, CaseResult)]
     if cases and repeat is None:
@@ -216,12 +216,12 @@ def _row(cat, items, ran_flag, event, repeat, expected, paths, missing) -> Row:
         label = f"{t.file}::{t.name} ({t.outcome})"
         if t.outcome == "passed":
             continue
-        if watch and t.outcome in ("failed", "error"):
-            changed.append(label)  # a pinned behavior moved: report, do not gate
+        if watch and t.outcome == "failed":
+            changed.append(label)  # a completed test whose pinned behavior moved: report, do not gate
         else:
-            hard.append(label)  # failed, errored or skipped (skipped is not run)
+            hard.append(label)  # failed, errored or skipped; error and skipped mean not run
     hard += [f"MISSING: {m} contributed no executed result" for m in missing]
-    det_expected = (not has_half) or bool(paths) or bool(tests)
+    det_expected = (not has_half) or bool(paths) or bool(tests) or pins
     det_ran = bool(ran_flag) and len(executed) > 0
     if det_expected and not det_ran:
         hard.append("NOT RUN: no executed deterministic result")
@@ -241,8 +241,8 @@ def _row(cat, items, ran_flag, event, repeat, expected, paths, missing) -> Row:
             msg = f"{c.key} ({c.passes}/{c.attempts} passes)"
             (changed if watch else hard).append(msg)
     n_exp = (expected or {}).get(cat.key)
-    if n_exp is not None and cases and len(cases) < n_exp:
-        hard.append(f"PARTIAL RUN: {len(cases)} of {n_exp} expected cases")
+    if n_exp is not None and cases and len(cases) != n_exp:
+        hard.append(f"PARTIAL RUN: {len(cases)} cases, expected {n_exp}")
     model_ran = bool(ran_flag) and any(c.attempts - c.errors > 0 for c in cases)
     if model_required and not model_ran:
         hard.append("NOT RUN: no completed Promptfoo attempts")
@@ -256,10 +256,10 @@ def _row(cat, items, ran_flag, event, repeat, expected, paths, missing) -> Row:
     runs = repeat if cases else len(executed)
     if hard:
         verdict = "FAIL"
+    elif changed:
+        verdict = "CHANGED" if ran else "CHANGED (partial)"  # partial: fork PR, model half not run
     elif not ran:
         verdict = "NOT RUN"  # only reachable for the fork-PR model half
-    elif changed:
-        verdict = "CHANGED"
     else:
         verdict = "PASS"
     sources = sorted(paths)
@@ -271,7 +271,7 @@ def _row(cat, items, ran_flag, event, repeat, expected, paths, missing) -> Row:
 
 
 def score(categories, buckets, ran_flags, event, meta=None, repeat=None,
-          expected_cases=None, file_map=FILE_MAP) -> Scorecard:
+          expected_cases=None, file_map=FILE_MAP, overrides=NAME_OVERRIDES) -> Scorecard:
     """`repeat` is the N every Promptfoo case must have run. `expected_cases` maps a
     category key to how many cases its run should contain. Every file in `file_map`
     must contribute at least one executed result, or its row FAILs."""
@@ -284,12 +284,22 @@ def score(categories, buckets, ran_flags, event, meta=None, repeat=None,
         for items in buckets.values() for t in items
         if isinstance(t, TestResult) and t.outcome != "skipped"
     }
+    executed_tests = [
+        t for items in buckets.values() for t in items
+        if isinstance(t, TestResult) and t.outcome != "skipped"
+    ]
+    pin_missing: dict[str, list[str]] = {}
+    for f, prefix, key in overrides:
+        if not any(_match(t.file.replace("\\", "/"), f) and t.name.startswith(prefix)
+                   for t in executed_tests):
+            pin_missing.setdefault(key, []).append(f"({f}, {prefix}*)")
+    pinned = {k for _, _, k in overrides}
     rows = []
     for cat in categories:
         paths = paths_by_key.get(cat.key, [])
-        missing = [p for p in paths if p not in seen]
+        missing = [p for p in paths if p not in seen] + pin_missing.get(cat.key, [])
         rows.append(_row(cat, buckets.get(cat.key, []), ran_flags.get(cat.key, True),
-                         event, repeat, expected_cases, paths, missing))
+                         event, repeat, expected_cases, paths, missing, cat.key in pinned))
     if any(r.verdict == "FAIL" for r in rows):
         verdict = "FAIL"
     elif event == "fork_pr" and any(r.key in FORK_PR_OPTIONAL and not r.ran for r in rows):
@@ -297,6 +307,37 @@ def score(categories, buckets, ran_flags, event, meta=None, repeat=None,
     else:
         verdict = "PASS"
     return Scorecard(verdict, event, rows, dict(meta or {}))
+
+
+# ------------------------------------------------- expected case counts
+
+def _load_tests(entries, base: Path) -> list[dict]:
+    cases: list[dict] = []
+    for e in entries or []:
+        if isinstance(e, str) and e.startswith("file://"):
+            import yaml
+
+            loaded = yaml.safe_load((base / e[len("file://"):]).read_text())
+            cases += _load_tests(loaded if isinstance(loaded, list) else [loaded], base)
+        elif isinstance(e, dict):
+            cases.append(e)
+    return cases
+
+
+def config_case_counts(config_path) -> tuple[int, int]:
+    """(non-residual cases, KNOWN RESIDUAL cases) in a Promptfoo config's tests:, following
+    file:// references relative to the config's directory. Raises ValueError if the
+    config cannot be loaded."""
+    import yaml
+
+    path = Path(config_path)
+    try:
+        cfg = yaml.safe_load(path.read_text())
+        cases = _load_tests(cfg.get("tests"), path.parent)
+    except (OSError, AttributeError, yaml.YAMLError) as e:
+        raise ValueError(f"cannot load promptfoo config {path}: {e}") from e
+    resid = sum(str(c.get("description", "")).startswith(RESIDUAL_DESCRIPTION_PREFIX) for c in cases)
+    return len(cases) - resid, resid
 
 
 # --------------------------------------------------------------- rendering
@@ -365,6 +406,13 @@ def detect_event(env=None) -> str:
     return name
 
 
+def _expected_arg(value: str):
+    cat, _, n = value.partition("=")
+    if not cat or not n.isdigit():
+        raise argparse.ArgumentTypeError(f"expected CATEGORY=COUNT with an integer count, got {value!r}")
+    return cat, int(n)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--junit", action="append", default=[])
@@ -373,7 +421,10 @@ def main(argv=None) -> int:
     ap.add_argument("--not-run", action="append", default=[], metavar="KEY",
                     help="mark a category as not run (e.g. trivy unavailable)")
     ap.add_argument("--repeat", type=int, default=None, help="N each Promptfoo case must have run")
-    ap.add_argument("--expected-cases", action="append", default=[], metavar="CATEGORY=COUNT")
+    ap.add_argument("--expected-cases", type=_expected_arg, action="append", default=[],
+                    metavar="CATEGORY=COUNT", help="override the count derived from the config")
+    ap.add_argument("--config-root", default=str(Path(__file__).resolve().parent.parent),
+                    help="repo root that holds the evals/ configs")
     ap.add_argument("--event", default=None)
     ap.add_argument("--meta", action="append", default=[], metavar="K=V")
     ap.add_argument("--out", default=None, help="directory for scorecard.md / scorecard.json")
@@ -401,8 +452,24 @@ def main(argv=None) -> int:
             buckets.setdefault("known_residuals", []).extend(load(parse_promptfoo, path, "known_residuals"))
     if args.promptfoo and args.repeat is None:
         ap.error("--repeat N is required when --promptfoo is given")
-    expected = {k: int(v) for k, _, v in (e.partition("=") for e in args.expected_cases)}
     flags = {k: False for k in args.not_run}
+    expected: dict[str, int] = {}
+    root = Path(args.config_root)
+    for spec in args.promptfoo:
+        cat = spec.partition("=")[0]
+        try:
+            plain, resid = config_case_counts(root / PROMPTFOO_SOURCES[cat if cat != "known_residuals" else "direct_injection"])
+        except (ValueError, KeyError) as e:
+            missing_sources.append(f"config for {cat} ({e})")
+            plain = resid = 0
+        for key, n in ((cat, plain),) + ((("known_residuals", resid),) if cat == "direct_injection" else ()):
+            if n == 0:
+                flags[key] = False  # no expected cases means we cannot tell if it ran
+            expected[key] = n
+    for k, v in args.expected_cases:  # explicit override
+        expected[k] = v
+        if v == 0:
+            flags[k] = False
     meta = dict(m.partition("=")[::2] for m in args.meta)
     if missing_sources:
         meta["unreadable_sources"] = "; ".join(missing_sources)

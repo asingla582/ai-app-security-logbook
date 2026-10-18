@@ -30,6 +30,7 @@ def full_buckets():
 def run(buckets, event="push", flags=None, **kw):
     # file_map={} switches off the per-file presence rule; the C2 tests turn it on.
     kw.setdefault("file_map", {})
+    kw.setdefault("overrides", [])
     kw.setdefault("repeat", 3)
     return sc.score(CATEGORIES, buckets, flags or {}, event, **kw)
 
@@ -41,6 +42,7 @@ def real_buckets():
         b.setdefault(key, []).append(T(path, "t"))
     for k in MODEL_KEYS + ["known_residuals"]:
         b.setdefault(k, []).append(C(k + "|{}", 3, 3))
+    b["known_residuals"].append(T("apps/api/tests/test_redaction.py", "test_residual_a"))
     return b
 
 
@@ -294,11 +296,11 @@ PARTIAL = "PASS (partial: model suites not run on fork PR)"
 
 def test_c2_real_baseline_is_green_and_missing_vitest_fails():
     b = real_buckets()
-    assert run(b, file_map=FILE_MAP).verdict == "PASS"
+    assert run(b, file_map=FILE_MAP, overrides=NAME_OVERRIDES).verdict == "PASS"
     web = {p for p in FILE_MAP if p.startswith("apps/web/")}
     for k, items in b.items():
         b[k] = [i for i in items if not (isinstance(i, sc.TestResult) and i.file in web)]
-    card = run(b, file_map=FILE_MAP)
+    card = run(b, file_map=FILE_MAP, overrides=NAME_OVERRIDES)
     assert card.verdict == "FAIL"
     assert any("MISSING: apps/web/src/lib/actions.test.ts" in f for r in card.rows for f in r.failures)
     assert "MISSING: apps/web/src/lib/actions.test.ts" in sc.render_md(card)
@@ -307,7 +309,7 @@ def test_c2_real_baseline_is_green_and_missing_vitest_fails():
 def test_c2_dropping_a_files_results_fails_its_row():
     b = real_buckets()
     b["approval_gate"] = [i for i in b["approval_gate"] if i.file != "apps/api/tests/test_approval_gate.py"]
-    card = run(b, file_map=FILE_MAP)
+    card = run(b, file_map=FILE_MAP, overrides=NAME_OVERRIDES)
     assert card.verdict == "FAIL"
     assert row(card, "approval_gate").verdict == "FAIL"
 
@@ -315,7 +317,7 @@ def test_c2_dropping_a_files_results_fails_its_row():
 def test_c2_a_files_results_all_skipped_counts_as_missing():
     b = real_buckets()
     b["trajectory"] = [T("apps/api/tests/test_trajectories.py", "t", "skipped")]
-    assert run(b, file_map=FILE_MAP).verdict == "FAIL"
+    assert run(b, file_map=FILE_MAP, overrides=NAME_OVERRIDES).verdict == "FAIL"
 
 
 def test_c2_vitest_suite_that_fails_to_import_is_a_failure(tmp_path):
@@ -393,6 +395,112 @@ def test_minor_sources_in_md_and_json_and_junit_prefers_file_attr(tmp_path):
     jx = tmp_path / "j.xml"
     jx.write_text('<testsuites><testcase classname="tests.test_other" file="apps/api/tests/test_actions.py" name="t"/></testsuites>')
     assert sc.parse_junit(jx)[0].file == "apps/api/tests/test_actions.py"
+
+
+# ---- fix round 2
+
+PIN = ("apps/api/tests/test_redaction.py", "test_residual_a")
+
+
+def test_r2_missing_residual_pins_fail_on_push_and_fork():
+    b = real_buckets()
+    b["known_residuals"] = [i for i in b["known_residuals"] if isinstance(i, sc.CaseResult)]
+    b["output_handling"].append(T("apps/api/tests/test_redaction.py", "test_other"))  # file still "seen"
+    for ev in ("push", "fork_pr"):
+        card = run(b, event=ev, file_map=FILE_MAP, overrides=NAME_OVERRIDES)
+        assert card.verdict == "FAIL", ev
+    md = sc.render_md(card)
+    assert "MISSING: (apps/api/tests/test_redaction.py, test_residual_*)" in md
+
+
+def test_r2_present_residual_pins_keep_baseline_green():
+    b = real_buckets()
+    assert run(b, file_map=FILE_MAP, overrides=NAME_OVERRIDES).verdict == "PASS"
+
+
+def _write_cfg(root, n_plain=2, n_resid=1):
+    ev = root / "evals"
+    ev.mkdir()
+    (ev / "c.yaml").write_text("tests:\n  - file://a.yaml\n  - file://r.yaml\n")
+    (ev / "a.yaml").write_text("".join(f"- description: plain {i}\n  vars: {{a: {i}}}\n" for i in range(n_plain)))
+    (ev / "r.yaml").write_text("".join(f"- description: KNOWN RESIDUAL r{i}\n" for i in range(n_resid)))
+    return ev / "c.yaml"
+
+
+def test_r2_config_counts_follow_file_refs_and_split_residuals(tmp_path):
+    assert sc.config_case_counts(_write_cfg(tmp_path)) == (2, 1)
+
+
+def test_r2_real_configs_counts():
+    root = __import__("pathlib").Path(__file__).resolve().parents[2]
+    assert sc.config_case_counts(root / "evals/promptfooconfig.yaml") == (19, 1)
+    assert sc.config_case_counts(root / "evals/promptfooconfig.indirect.yaml")[0] == 12
+    assert sc.config_case_counts(root / "evals/promptfooconfig.tools.yaml")[0] == 6
+
+
+def _report(path, n_cases, repeat=3, resid=0):
+    items = [{"testCase": {"description": f"plain {i}"}, "vars": {"a": i}, "success": True, "error": None}
+             for i in range(n_cases) for _ in range(repeat)]
+    items += [{"testCase": {"description": f"KNOWN RESIDUAL r{i}"}, "vars": {}, "success": True, "error": None}
+              for i in range(resid) for _ in range(repeat)]
+    path.write_text(json.dumps({"results": {"results": items}}))
+
+
+def test_r2_truncated_report_fails_without_expected_cases_flag(tmp_path, monkeypatch):
+    cfg = _write_cfg(tmp_path)  # expects 2 plain + 1 residual
+    # tests/scorecard rows etc. are not supplied, so the verdict is FAIL anyway; read the JSON row.
+    full, short = tmp_path / "full.json", tmp_path / "short.json"
+    _report(full, 2, resid=1)
+    _report(short, 1, resid=1)
+    def verdict(report):
+        out = tmp_path / ("o" + report.stem)
+        sc.main(["--promptfoo", f"direct_injection={report}", "--repeat", "3", "--config-root", str(tmp_path),
+                 "--event", "push", "--out", str(out)])
+        rows = {r["key"]: r for r in json.loads((out / "scorecard.json").read_text())["rows"]}
+        return rows["direct_injection"], rows["known_residuals"]
+    # config path in PROMPTFOO_SOURCES is evals/promptfooconfig.yaml
+    (tmp_path / "evals" / "promptfooconfig.yaml").write_text(cfg.read_text())
+    d, r = verdict(full)
+    assert d["verdict"] == "PASS" and not any("PARTIAL" in f for f in r["failures"])  # r lacks pytest pins here
+    d, r = verdict(short)
+    assert d["verdict"] == "FAIL" and any("PARTIAL RUN" in f for f in d["failures"])
+
+
+def test_r2_unloadable_or_empty_config_is_not_run_and_fails(tmp_path):
+    rep = tmp_path / "r.json"
+    _report(rep, 2)
+    out = tmp_path / "o"
+    assert sc.main(["--promptfoo", f"direct_injection={rep}", "--repeat", "3",
+                    "--config-root", str(tmp_path), "--event", "push", "--out", str(out)]) == 1
+    rows = {r["key"]: r for r in json.loads((out / "scorecard.json").read_text())["rows"]}
+    assert rows["direct_injection"]["ran"] is False and rows["direct_injection"]["verdict"] == "FAIL"
+
+
+def test_r2_malformed_expected_cases_is_a_clean_argparse_error(tmp_path):
+    import pytest
+    with pytest.raises(SystemExit) as e:
+        sc.main(["--expected-cases", "X=abc"])
+    assert e.value.code == 2
+
+
+def test_r2_errored_residual_pin_is_hard_fail_not_changed():
+    b = full_buckets()
+    b["known_residuals"] = [C("KNOWN RESIDUAL x|{}", 3, 3), T("apps/api/tests/test_redaction.py", "test_residual_a", "error")]
+    card = run(b)
+    assert row(card, "known_residuals").verdict == "FAIL" and card.verdict == "FAIL"
+    b["known_residuals"][1] = T("apps/api/tests/test_redaction.py", "test_residual_a", "failed")
+    assert row(run(b), "known_residuals").verdict == "CHANGED"
+
+
+def test_r2_fork_pr_changed_pin_is_visible_in_table():
+    b = full_buckets()
+    for k in MODEL_KEYS:
+        del b[k]
+    b["known_residuals"] = [T("apps/api/tests/test_redaction.py", "test_residual_a", "failed")]
+    card = run(b, event="fork_pr")
+    assert card.verdict == PARTIAL
+    assert row(card, "known_residuals").verdict == "CHANGED (partial)"
+    assert "CHANGED (partial)" in sc.render_md(card)
 
 
 def test_categories_are_the_spec_rows():
