@@ -1,4 +1,4 @@
-.PHONY: up down setup test attack seed eval eval-baseline eval-indirect eval-tools redteam-week6 redteam-week7 theater-week8 theater-week8-v2 redteam-week8
+.PHONY: lint trivy up down setup test attack seed eval eval-baseline eval-indirect eval-tools redteam-week6 redteam-week7 theater-week8 theater-week8-v2 redteam-week8
 
 # Prepare a fresh clone: start Supabase, fill .env with its local keys, and build
 # the API virtualenv. Idempotent, safe to re-run. Needs Docker, Node (npx), Python 3.
@@ -86,3 +86,13 @@ theater-week8-v2:
 redteam-week8:
 	mkdir -p evidence/week8
 	set -a; . ./.env; set +a; cd apps/api && . .venv/bin/activate && python -u ../../evidence/week8/redteam_week8.py 2>&1 | tee ../../evidence/week8/redteam-run.txt
+
+# Lint the API (ruff, line length 100). Exit 0 when clean; CI runs the same check.
+lint:
+	cd apps/api && . .venv/bin/activate && ruff check .
+
+# Dependency/vuln scan, the same gate CI runs: fails on any fixable HIGH/CRITICAL.
+# Image pinned to trivy 0.76.0 (newest stable; brief said 0.69.0). Override the report path with TRIVY_OUT=<file>.
+TRIVY_OUT ?= .trivy.json
+trivy:
+	docker run --rm -v "$$PWD":/src aquasec/trivy:0.76.0 fs --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 --format json -o /src/$(TRIVY_OUT) /src

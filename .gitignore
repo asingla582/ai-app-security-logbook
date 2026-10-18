@@ -19,3 +19,6 @@ out/
 supabase/.branches/
 supabase/.temp/
 *.egg-info/
+
+# Trivy scan output
+.trivy.json
