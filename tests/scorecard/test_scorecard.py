@@ -258,6 +258,28 @@ def test_detect_event(tmp_path):
     assert sc.detect_event(env) == "pull_request"
 
 
+def test_detect_event_deleted_fork_is_fork_pr(tmp_path):
+    # A PR from a fork that was later deleted has head.repo = null.
+    ev = tmp_path / "e.json"
+    pr = {"head": {"repo": None}, "base": {"repo": {"full_name": "o/r"}}}
+    ev.write_text(json.dumps({"pull_request": pr}))
+    env = {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_EVENT_PATH": str(ev)}
+    assert sc.detect_event(env) == "fork_pr"
+    ev.write_text(json.dumps({"pull_request": {"head": {}, "base": {"repo": {"full_name": "o/r"}}}}))
+    assert sc.detect_event(env) == "fork_pr"
+
+
+def test_detect_event_unreadable_payload_fails_closed(tmp_path):
+    # Cannot read the payload: treat it as a same-repo PR, so every row is required.
+    env = {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_EVENT_PATH": str(tmp_path / "none.json")}
+    assert sc.detect_event(env) == "pull_request"
+    assert sc.detect_event({"GITHUB_EVENT_NAME": "pull_request"}) == "pull_request"
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json")
+    env["GITHUB_EVENT_PATH"] = str(bad)
+    assert sc.detect_event(env) == "pull_request"
+
+
 # ---- fix round 1: regression tests for the false-PASS paths
 
 

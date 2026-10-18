@@ -414,11 +414,18 @@ def detect_event(env=None) -> str:
     if name.startswith("pull_request"):
         try:
             ev = json.loads(Path(env["GITHUB_EVENT_PATH"]).read_text())
+        except (KeyError, OSError, ValueError):
+            # No payload to read: fail closed. A same-repo PR requires every row,
+            # so a missing key FAILs instead of passing as a partial fork run.
+            return "pull_request"
+        try:
             head = ev["pull_request"]["head"]["repo"]["full_name"]
             base = ev["pull_request"]["base"]["repo"]["full_name"]
             return "fork_pr" if head != base else "pull_request"
-        except (KeyError, OSError, ValueError):
-            return "fork_pr"  # cannot prove same-repo, so do not grant secrets-based rows
+        except (KeyError, TypeError):
+            # head.repo is null when the fork was deleted. The payload says it is
+            # not provably same-repo, so do not run the secrets-based suites.
+            return "fork_pr"
     return name
 
 
