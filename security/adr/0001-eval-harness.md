@@ -134,9 +134,20 @@ between runs and human annotation.
   `scorecard_config.py` or it lands in "Other deterministic"; the Promptfoo pin and
   its report quirks have to be tracked by hand; the scorecard's own tests
   (`tests/scorecard/`) are part of the gate.
-- **CI depends on one secret.** The model rows need the author's `ANTHROPIC_API_KEY`
-  repository secret. Without it the job fails on push and same-repo PRs by design,
-  and fork PRs get a stated partial pass with the model rows not run.
+- **CI depended on one secret (superseded 2026-10-18).** The model rows needed the
+  author's `ANTHROPIC_API_KEY` repository secret. Without it the job failed on push
+  and same-repo PRs by design, and fork PRs got a stated partial pass with the model
+  rows not run.
+- **CI makes no model calls (2026-10-18 author decision).** There is no model key in
+  GitHub. `make scorecard` runs the model suites locally per release and writes
+  `evidence/scorecard/model-latest.json`; `make scorecard-ci` runs the deterministic
+  rows live and FAILs the model rows unless that file is all PASS, repeat 10 or more,
+  and its content fingerprint (`evals_hash`, `app_prompt_hash`, template ref, chat
+  and grader model, Promptfoo version) matches the tree. Fork PRs get the same check.
+  The cost: a model-suite regression is found at the next local run, not on the push
+  that caused it, and a provider-side change under the same model id is found only
+  then too (RR-W9-6). A release now requires a local paid run and a commit of the
+  evidence file.
 - **Revisit if** the project adds an agent framework whose native trajectory format
   matches what the app records, or if Week 10 observability brings in tracing that
   would also hold eval history. Either would change the trade-off above.

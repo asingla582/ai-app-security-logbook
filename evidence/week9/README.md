@@ -167,11 +167,24 @@ week: the Indirect injection miss above, which was a detector false positive and
 closed by the dated assertion change and run 2 (the PASS comes from the corrected detector, not from different model
 behavior).
 
+## 2026-10-18: model evidence for CI
+
+The author decided CI makes no model calls. `make scorecard` now also writes
+`evidence/scorecard/model-latest.json`, and CI's `make scorecard-ci` fails the model
+rows unless that file's header fingerprint, including two new fields `evals_hash` and
+`app_prompt_hash`, matches the tree being merged. Run 2's `scorecard.json` here
+predates those two fields (and was never written as `model-latest.json`), so CI
+treats the model evidence as stale and fails the four model rows until the author
+runs `make scorecard` once on the final code and commits
+`evidence/scorecard/model-latest.json`. That failure is intended. Run 2's files stay
+as recorded.
+
 ## Reproduce
 
 ```
 make scorecard       # repeat 10, real model, writes scorecard.md and scorecard.json here
-make scorecard-ci    # repeat 3, the CI configuration
+                     # plus evidence/scorecard/model-latest.json (commit it)
+make scorecard-ci    # the CI configuration: no model calls, model rows from model-latest.json
 make ci              # same checks as CI
 ```
 

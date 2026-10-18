@@ -37,17 +37,19 @@ Promptfoo is pinned at `promptfoo@0.120.27` and always runs with `--no-cache
 ## The scorecard
 
 ```
-make scorecard       # repeat 10; writes evidence/week9/scorecard.md and scorecard.json
-make scorecard-ci    # repeat 3; writes .scorecard/ (gitignored); what CI runs
+make scorecard       # local, paid: repeat 10; writes evidence/week9/scorecard.md|json
+                     # and evidence/scorecard/model-latest.json (commit it)
+make scorecard-ci    # no model calls, no key; writes .scorecard/ (gitignored); what CI runs
 make ci              # scorecard-ci, then the web lint, tests and build
 ```
 
-One run executes pytest (`apps/api/tests`, `tests/rls`, `tests/scorecard`), vitest,
-ruff (`apps/api`, `scripts/`, `tests/`), Trivy (through Docker) and the three Promptfoo
-configs above, then scores the
-results into twelve rows. The `make scorecard` and `make scorecard-ci` targets source
-`.env` if it exists, so a local run needs `ANTHROPIC_API_KEY` there, plus Docker and
-the local Supabase stack. A recorded run at repeat 10 is about 380 chat calls (200
+`make scorecard` executes pytest (`apps/api/tests`, `tests/rls`, `tests/scorecard`),
+vitest, ruff (`apps/api`, `scripts/`, `tests/`), Trivy (through Docker) and the three
+Promptfoo configs above, then scores the results into twelve rows. `make
+scorecard-ci` runs the same deterministic suites but no Promptfoo config; its model
+rows come from the committed evidence (see "In CI" below). Both targets source `.env`
+if it exists, so a local `make scorecard` needs `ANTHROPIC_API_KEY` there, plus Docker
+and the local Supabase stack. A recorded run at repeat 10 is about 380 chat calls (200
 direct, 120 indirect, 60 tools) plus the LLM-grader calls for the rubric cases; run
 2's raw Promptfoo reports (gitignored) hold 80 graded rubric results (50 direct, 30
 indirect). Raw output goes to `raw/` under the output directory, which is gitignored;
@@ -71,7 +73,12 @@ The scorecard header records the commit and whether the tree was dirty (both rea
 before the previous scorecard is cleared, since `evidence/week9/scorecard.*` is
 tracked), the model id (`app.config.CHAT_MODEL`), the template ref
 (`app.prompting.CHAT_TEMPLATE.ref`), the grader model (from the configs'
-`defaultTest` provider), the Promptfoo version and the repeat count.
+`defaultTest` provider), the Promptfoo version, the repeat count, where the model
+rows came from (`model_source: live` or `committed`), and two content hashes:
+`evals_hash` (sha256 over the path and bytes of every `*.yaml`, `*.yml`, `*.py` and
+`*.js` under `evals/`, not this README and not `__pycache__`) and `app_prompt_hash`
+(the same over `apps/api/app/prompts/` plus the app modules the eval providers load:
+`prompting.py`, `gateway.py`, `tools.py`, `provenance.py` and `config.py`).
 
 The header names one template, so the model rows have to score that template. A
 static check (`prompt_pin`, in the Platform hygiene row) FAILs if any of the three
@@ -80,29 +87,65 @@ gate configs uses a prompt function pinned to a version other than
 
 ## In CI
 
+2026-10-18 author decision: CI makes no model calls. There is no `ANTHROPIC_API_KEY`
+in GitHub, and paying for about 380 chat calls on every push is not an option. The
+model suites are measured locally, once per release, and CI checks that what was
+measured is what is being merged.
+
 The `scorecard` job in `.github/workflows/ci.yml` runs on pushes to `main` and on pull
 requests. It starts a local Supabase stack, installs the API and web dependencies,
-runs `make scorecard-ci` with the `ANTHROPIC_API_KEY` repository secret, and uploads
-`.scorecard/` as an artifact (the upload fails if the directory is empty). There is
-no skip step. The job is capped at 90 minutes, so a hung suite ends the job as a
-failure instead of holding the runner.
+runs `make scorecard-ci` with no model key, and uploads `.scorecard/` as an artifact
+(the upload fails if the directory is empty). There is no skip step. The job is
+capped at 90 minutes, so a hung suite ends the job as a failure instead of holding
+the runner.
+
+`make scorecard-ci` runs every deterministic suite live, as before. For the four rows
+with a model half (Direct injection, Indirect injection, Tool injection, Known
+residuals) it reads `evidence/scorecard/model-latest.json` and accepts it only if all
+of these hold:
+
+- the file exists and is valid JSON;
+- every model row in it is PASS;
+- it was measured at repeat 10 or more;
+- every fingerprint field in its header (`template_ref`, `chat_model`,
+  `grader_model`, `promptfoo_version`, `evals_hash`, `app_prompt_hash`) is present
+  and equals the value computed from the tree being checked.
+
+The committed per-case results are then scored again by the same rules as a live run
+(every case in every run, no errored attempts, as many cases as the configs define).
+If the evidence is fresh, each model row shows PASS with a note such as "measured
+locally 2026-10-18 at abc1234, repeat 10, fingerprint match". If anything fails, the
+model rows FAIL and say what was wrong, for example "STALE: evals_hash changed
+(...); run `make scorecard` locally and commit evidence/scorecard/model-latest.json".
+
+**The staleness rule.** Freshness is content-based, not commit-based: the evidence is
+committed after the run that produced it, so its commit can never be the commit under
+test. Editing any eval config, corpus, provider or assertion, any chat template, or
+the app modules listed above makes the evidence stale, and CI fails until it is
+measured again. Changing the model id, the grader model or the Promptfoo pin does the
+same.
+
+**What a release requires.** Run `make scorecard` locally on the final code (paid,
+repeat 10), check that it passed, and commit `evidence/scorecard/model-latest.json`
+with the weekly evidence. Fork PRs get the same full check, since no secret is
+involved; there is no partial verdict in this mode.
+
+**Expected state right now.** No `model-latest.json` has been committed yet. Run 2's
+file (`evidence/week9/scorecard.json`) predates `evals_hash` and `app_prompt_hash`,
+so it could not pass the check anyway. Until the author runs `make scorecard` once on
+the final code and commits the result, the four model rows FAIL in CI. That is
+intended: a measurement that does not match the code should not look green.
+
+What this does not catch: a change on the model provider's side (same model id,
+different behavior) shows up only at the next local run, not on a push. The code
+paths the hashes do not cover (for example the output sanitizer, which the model
+suites do not exercise) are scored by the deterministic rows, live, on every push.
 
 The scorecard job is advisory for now. `main` has no branch protection and no
 ruleset, so a red `scorecard` check does not block a merge; it only shows up as red.
 The check becomes a gate when the author adds a ruleset on `main` that requires the
 `scorecard`, `web` and `security` checks. Until then this is an open residual
 (RR-W9-5 in the threat model), owned by the author.
-
-- **Push and same-repo pull requests:** the model rows are required. Without the
-  secret they do not run, and the job fails.
-- **Fork pull requests:** secrets are not available by design, so the model rows are
-  marked not required and the verdict reads "PASS (partial: model suites not run on
-  fork PR)". Every deterministic row is still required.
-
-The job needs the author's `ANTHROPIC_API_KEY` secret to pass. Until it is added, the
-`scorecard` job fails on `main`, which is the intended result: a gate that cannot run
-should not look green. When this was written the job had not yet run on GitHub (the
-Week 9 branch was not pushed); the PASS results so far are local runs.
 
 The `web` job (lint, tests, build) and the `security` job (Gitleaks, Trivy through
 `aquasecurity/trivy-action`) run separately. The scorecard's own Trivy check uses the
