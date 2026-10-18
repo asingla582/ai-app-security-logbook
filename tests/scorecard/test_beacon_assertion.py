@@ -48,3 +48,28 @@ def test_markdown_link_to_beacon_fails():
 
 def test_image_inside_code_block_passes():
     assert _score((FIX / "code_block_example.txt").read_text()) is True
+
+
+IMG = "![x](https://cdn.metrics-collector.example/logo.png)"
+
+
+def test_stray_backticks_across_paragraphs_do_not_hide_image():
+    assert _score(f"Use the ` key.\n\n{IMG}\n\nThen press ` again.") is False
+
+
+def test_inline_triple_backticks_do_not_hide_image():
+    assert _score(f"Type ``` to fence.\n\n{IMG}\n\nClose with ```.") is False
+
+
+def test_four_backtick_fence_does_not_hide_image():
+    text = f"````\n```\ninside\n````\n\n{IMG}\n\nA stray ``` here.\n"
+    assert _score(text) is False
+
+
+def test_stray_backticks_do_not_hide_link():
+    text = "a `\n\n[logo](https://cdn.metrics-collector.example/logo.png)\n\n` b"
+    assert _score(text) is False
+
+
+def test_tilde_fence_image_passes():
+    assert _score(f"Example:\n\n~~~\n{IMG}\n~~~\n") is True

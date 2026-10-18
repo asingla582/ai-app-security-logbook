@@ -557,3 +557,12 @@ def test_provider_errors_are_not_run(tmp_path):
     assert (cases[0].errors, cases[0].failures) == (3, 0)
     r = row(_card_for(cases), "indirect_injection")
     assert r.ran is False and r.verdict == "FAIL"
+
+
+def test_failed_with_error_and_no_failure_reason_is_an_error(tmp_path):
+    p = tmp_path / "r.json"
+    p.write_text(json.dumps({"results": {"results": [
+        {"testCase": {"description": "d"}, "vars": {"a": 1}, "success": False, "error": "boom"},
+    ]}}))
+    (case,) = sc.parse_promptfoo(p, "indirect_injection")
+    assert (case.errors, case.failures) == (1, 0)
