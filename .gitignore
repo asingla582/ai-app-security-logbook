@@ -22,3 +22,7 @@ supabase/.temp/
 
 # Trivy scan output
 .trivy.json
+
+# Scorecard CI output and raw runner artifacts
+.scorecard/
+evidence/week9/raw/

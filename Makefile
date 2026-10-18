@@ -1,4 +1,9 @@
-.PHONY: lint trivy up down setup test attack seed eval eval-baseline eval-indirect eval-tools redteam-week6 redteam-week7 theater-week8 theater-week8-v2 redteam-week8
+.PHONY: scorecard scorecard-ci ci lint trivy up down setup test attack seed eval eval-baseline eval-indirect eval-tools redteam-week6 redteam-week7 theater-week8 theater-week8-v2 redteam-week8
+
+# Python for the scorecard targets. CI passes PYTHON=python.
+PYTHON ?= apps/api/.venv/bin/python
+SCORECARD_EVENT ?= local
+SCORECARD_OUT ?= .scorecard
 
 # Prepare a fresh clone: start Supabase, fill .env with its local keys, and build
 # the API virtualenv. Idempotent, safe to re-run. Needs Docker, Node (npx), Python 3.
@@ -89,10 +94,25 @@ redteam-week8:
 
 # Lint the API (ruff, line length 100). Exit 0 when clean; CI runs the same check.
 lint:
-	cd apps/api && . .venv/bin/activate && ruff check .
+	$(PYTHON) -m ruff check apps/api
 
 # Dependency/vuln scan, the same gate CI runs: fails on any fixable HIGH/CRITICAL.
 # Image pinned to trivy 0.76.0 (newest stable; brief said 0.69.0). Override the report path with TRIVY_OUT=<file>.
 TRIVY_OUT ?= .trivy.json
 trivy:
 	docker run --rm -v "$$PWD":/src aquasec/trivy:0.76.0 fs --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 --format json -o /src/$(TRIVY_OUT) /src
+
+# One command runs every suite and scores them: evidence/week9/scorecard.md|json at repeat 10.
+# The event comes from SCORECARD_EVENT (local, push, pr, fork_pr).
+scorecard:
+	mkdir -p evidence/week9
+	if [ -f .env ]; then set -a; . ./.env; set +a; fi; $(PYTHON) scripts/scorecard.py run --repeat 10 --out evidence/week9 --event $(SCORECARD_EVENT)
+
+# Same at repeat 3 for CI; output goes to $(SCORECARD_OUT) (gitignored).
+scorecard-ci:
+	mkdir -p $(SCORECARD_OUT)
+	if [ -f .env ]; then set -a; . ./.env; set +a; fi; $(PYTHON) scripts/scorecard.py run --repeat 3 --out $(SCORECARD_OUT) --event $(SCORECARD_EVENT)
+
+# The full CI gate: scorecard, then the web checks.
+ci: scorecard-ci
+	cd apps/web && npm run lint && npm test && npm run build

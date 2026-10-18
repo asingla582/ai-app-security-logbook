@@ -75,6 +75,9 @@ FILE_MAP: dict[str, str] = {
     # (the spec lists "grants" under platform hygiene), not cross_tenant.
     "tests/rls/test_definer_grants.py": "platform_hygiene",
     "tests/rls/test_record_model_call_membership.py": "platform_hygiene",
+    # ruff and Trivy outcomes arrive as synthetic junit cases from the runner.
+    "scorecard/ruff": "platform_hygiene",
+    "scorecard/trivy": "platform_hygiene",
     # Approval gate
     "tests/rls/test_pending_actions.py": "approval_gate",
     "apps/api/tests/test_actions.py": "approval_gate",
@@ -103,6 +106,7 @@ FILE_MAP: dict[str, str] = {
     "apps/api/tests/test_chat.py": "other_deterministic",
     "apps/web/src/lib/api.test.ts": "other_deterministic",
     "tests/scorecard/test_scorecard.py": "other_deterministic",
+    "tests/scorecard/test_runner.py": "other_deterministic",
 }
 
 # (file, test-name prefix, category key). Scoped to a file so a stray test elsewhere

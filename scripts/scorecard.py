@@ -10,9 +10,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
+import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -414,6 +417,9 @@ def _expected_arg(value: str):
 
 
 def main(argv=None) -> int:
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv and argv[0] == "run":
+        return run_main(argv[1:])
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--junit", action="append", default=[])
     ap.add_argument("--vitest", action="append", default=[])
@@ -486,6 +492,159 @@ def main(argv=None) -> int:
         (out / "scorecard.json").write_text(json.dumps(render_json(sc), indent=2) + "\n")
     print(md)
     return 0 if sc.verdict == "PASS" or sc.verdict.startswith("PASS (partial") else 1
+
+
+# ------------------------------------------------------------------ runner
+# `run` orchestrates every suite as a subprocess, then hands the outputs to main() above.
+# It holds no scoring logic: a source that did not produce output is simply not passed
+# on, so its rows come out as not run (and FAIL when required).
+
+REPO = Path(__file__).resolve().parent.parent
+PROMPTFOO_VERSION = "0.120.27"
+PYTEST_DIRS = ["apps/api/tests", "tests/rls", "tests/scorecard"]
+PROMPTFOO_RUNS = [  # (scoring category, config). The direct report also feeds known_residuals.
+    ("direct_injection", "evals/promptfooconfig.yaml"),
+    ("indirect_injection", "evals/promptfooconfig.indirect.yaml"),
+    ("tool_injection", "evals/promptfooconfig.tools.yaml"),
+]
+# Seconds per source.
+TIMEOUTS = {"pytest": 3600, "vitest": 900, "promptfoo": 7200, "lint": 300, "trivy": 1800}
+
+
+def _sh(cmd, env=None, cwd=None, timeout=600):
+    """Run one source. Returns (exit code, combined output); a timeout is exit code 124."""
+    try:
+        p = subprocess.run(cmd, cwd=cwd or REPO, env=env, timeout=timeout,
+                           capture_output=True, text=True, check=False)
+        return p.returncode, (p.stdout or "") + (p.stderr or "")
+    except subprocess.TimeoutExpired:
+        return 124, f"timeout after {timeout}s: {' '.join(map(str, cmd))}"
+    except OSError as e:
+        return 127, f"cannot run {cmd[0]}: {e}"
+
+
+def git_dirty() -> bool:
+    code, out = _sh(["git", "status", "--porcelain"])
+    return code != 0 or bool(out.strip())
+
+
+def _git_commit() -> str:
+    code, out = _sh(["git", "rev-parse", "--short", "HEAD"])
+    return out.strip() if code == 0 else "unknown"
+
+
+def _app_header() -> dict[str, str]:
+    """Model id and template ref come from the app, never hardcoded."""
+    sys.path.insert(0, str(REPO / "apps" / "api"))
+    try:
+        from app.config import CHAT_MODEL
+        from app.prompting import CHAT_TEMPLATE
+
+        return {"chat_model": CHAT_MODEL, "template_ref": CHAT_TEMPLATE.ref}
+    except Exception as e:  # noqa: BLE001 - a header gap is reported, not fatal
+        return {"chat_model": f"unavailable ({type(e).__name__})", "template_ref": "unavailable"}
+
+
+def _hygiene_junit(path: Path, ruff: str, trivy: str) -> None:
+    """ruff and Trivy as junit testcases so the scoring path reads them like any test.
+    Outcome is passed / failed / skipped (skipped = the tool could not run)."""
+    def case(name, outcome):
+        inner = {"passed": "", "failed": "<failure/>", "skipped": "<skipped/>"}[outcome]
+        return f'<testcase classname="hygiene" file="scorecard/{name}" name="{name}">{inner}</testcase>'
+
+    path.write_text('<testsuites><testsuite name="hygiene">'
+                    + case("ruff", ruff) + case("trivy", trivy) + "</testsuite></testsuites>")
+
+
+def run_main(argv) -> int:
+    ap = argparse.ArgumentParser(prog="scorecard.py run")
+    ap.add_argument("--repeat", type=int, required=True)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--event", choices=["local", "push", "pr", "pull_request", "fork_pr"],
+                    default=os.environ.get("SCORECARD_EVENT", "local"))
+    args = ap.parse_args(argv)
+
+    out = Path(args.out).resolve()
+    raw = out / "raw"
+    raw.mkdir(parents=True, exist_ok=True)
+    py = os.environ.get("PYTHON") or "apps/api/.venv/bin/python"
+    if "/" in py:
+        py = os.path.abspath(REPO / py)  # not resolve(): a venv python is a symlink
+    env = dict(os.environ, PYTHON=py, PROMPTFOO_PYTHON=py)
+    notes: list[str] = []
+    score_argv: list[str] = []
+
+    def log(name, code, text):
+        (raw / f"{name}.log").write_text(text)
+        if code != 0:
+            notes.append(f"{name} exit {code}")
+
+    # pytest, once over every Python suite; per-file presence relies on the file attribute.
+    junit = raw / "pytest.xml"
+    code, text = _sh([py, "-m", "pytest", "-q", "-o", "junit_family=xunit1",
+                      f"--junitxml={junit}", *PYTEST_DIRS], env=env, timeout=TIMEOUTS["pytest"])
+    log("pytest", code, text)
+    if junit.exists():
+        score_argv += ["--junit", str(junit)]
+
+    # vitest
+    vit = raw / "vitest.json"
+    code, text = _sh(["npx", "vitest", "run", "--reporter=json", f"--outputFile={vit}"],
+                     env=env, cwd=REPO / "apps" / "web", timeout=TIMEOUTS["vitest"])
+    log("vitest", code, text)
+    if vit.exists():
+        score_argv += ["--vitest", str(vit)]
+
+    # platform hygiene: ruff, then Trivy (needs Docker; without it Trivy is not run)
+    code, text = _sh(["make", "lint"], env=env, timeout=TIMEOUTS["lint"])
+    log("ruff", code, text)
+    ruff = "passed" if code == 0 else "failed"
+    dcode, _ = _sh(["docker", "info"], env=env, timeout=60) if shutil.which("docker") else (127, "")
+    if dcode == 0:
+        code, text = _sh(["make", "trivy"], env=dict(env, TRIVY_OUT=".trivy.json"),
+                         timeout=TIMEOUTS["trivy"])
+        log("trivy", code, text)
+        trivy = "passed" if code == 0 else "failed"
+    else:
+        notes.append("trivy not run: Docker unavailable")
+        trivy = "skipped"
+    hyg = raw / "hygiene.xml"
+    _hygiene_junit(hyg, ruff, trivy)
+    score_argv += ["--junit", str(hyg)]
+
+    # Promptfoo model suites. No key: do not run them and say why. Omitting --promptfoo
+    # (rather than --not-run) leaves each row's deterministic half to be scored normally;
+    # on a required event the empty model half then FAILs the row.
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        for cat, cfg in PROMPTFOO_RUNS:
+            rep = raw / f"promptfoo-{cat}.json"
+            code, text = _sh(["npx", f"promptfoo@{PROMPTFOO_VERSION}", "eval", "-c", cfg,
+                              "--no-cache", "--no-share", "--repeat", str(args.repeat),
+                              "-o", str(rep)], env=env, timeout=TIMEOUTS["promptfoo"])
+            # promptfoo exits non-zero when a case fails; the report is what counts.
+            (raw / f"promptfoo-{cat}.log").write_text(text)
+            if rep.exists():
+                score_argv += ["--promptfoo", f"{cat}={rep}"]
+            else:
+                notes.append(f"promptfoo {cat} produced no report (exit {code})")
+    else:
+        notes.append("model suites not run: ANTHROPIC_API_KEY is not set"
+                     + ("" if args.event == "fork_pr" else " (required on this event, so FAIL)"))
+
+    meta = {
+        "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "commit": _git_commit(),
+        "dirty": str(git_dirty()).lower(),
+        **_app_header(),
+        "promptfoo_version": PROMPTFOO_VERSION,
+        "repeat": str(args.repeat),
+    }
+    if notes:
+        meta["notes"] = "; ".join(notes)
+    for k, v in meta.items():
+        score_argv += ["--meta", f"{k}={v}"]
+    return main(score_argv + ["--repeat", str(args.repeat), "--event", args.event,
+                              "--out", str(out)])
 
 
 if __name__ == "__main__":
