@@ -24,7 +24,7 @@ seed:
 
 # Runs both suites the CI gate runs: the API tests and the database-layer RLS tests.
 test:
-	set -a; . ./.env; set +a; . apps/api/.venv/bin/activate; python -m pytest -q apps/api/tests tests/rls
+	set -a; . ./.env; set +a; . apps/api/.venv/bin/activate; python -m pytest -q apps/api/tests tests/rls tests/scorecard
 	cd apps/web && npm test
 
 # Reproduce the Week 1 cross-tenant attack run and capture the evidence.
