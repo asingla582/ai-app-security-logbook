@@ -49,11 +49,17 @@ class CaseResult:
     key: str
     attempts: int
     passes: int
-    errors: int
+    errors: int  # provider/runtime errors: the attempt did not complete
+    failures: int = 0  # assertion failures: the attempt ran and the output failed
 
     @property
     def passed(self) -> bool:
-        return self.attempts > 0 and self.passes == self.attempts and self.errors == 0
+        return (
+            self.attempts > 0
+            and self.passes == self.attempts
+            and self.errors == 0
+            and self.failures == 0
+        )
 
 
 @dataclass
@@ -150,13 +156,20 @@ def _load_cases(path) -> list[tuple[str, CaseResult]]:
         if vars_ is None:
             vars_ = (item.get("testCase") or {}).get("vars") or {}
         key = desc + "|" + json.dumps(vars_, sort_keys=True)
-        g = grouped.setdefault(key, [desc, 0, 0, 0])
+        g = grouped.setdefault(key, [desc, 0, 0, 0, 0])
         g[1] += 1
-        if item.get("error"):
-            g[3] += 1  # an error is a failed attempt, never a pass
+        reason = item.get("failureReason")
+        if reason == 1:
+            g[4] += 1  # assertion failed: the attempt ran, the output was bad
+        elif reason == 2 or item.get("error"):
+            # provider/runtime error; also any error with no usable failureReason
+            # (older or missing field), which fails closed as an error
+            g[3] += 1
         elif item.get("success") is True:
             g[2] += 1
-    return [(g[0], CaseResult(k, g[1], g[2], g[3])) for k, g in grouped.items()]
+        else:
+            g[4] += 1  # not a pass, no error message: count as a failed attempt
+    return [(g[0], CaseResult(k, g[1], g[2], g[3], g[4])) for k, g in grouped.items()]
 
 
 def parse_promptfoo(path, category) -> list[CaseResult]:
@@ -241,7 +254,7 @@ def _row(cat, items, ran_flag, event, repeat, expected, paths, missing, pins=Fal
         if why:
             hard.append(f"{c.key} ({why})")
         elif c.passes < c.attempts:
-            msg = f"{c.key} ({c.passes}/{c.attempts} passes)"
+            msg = f"{c.key} ({c.passes}/{c.attempts} passes, {c.failures} failed assertion(s))"
             (changed if watch else hard).append(msg)
     n_exp = (expected or {}).get(cat.key)
     if n_exp is not None and cases and len(cases) != n_exp:

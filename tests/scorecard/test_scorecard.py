@@ -511,3 +511,49 @@ def test_categories_are_the_spec_rows():
     }
     assert all(c.required for c in CATEGORIES)
     assert set(FILE_MAP.values()) <= set(CATS)
+
+
+# ---- assertion failures are failures, provider errors are errors (Task 8b)
+
+def _pf_cases(tmp_path, reasons, key="indirect_injection"):
+    items = [
+        {"testCase": {"description": "d"}, "vars": {"a": 1},
+         "success": r == 0, "failureReason": r,
+         "error": None if r == 0 else ("Custom function returned false" if r == 1 else "429")}
+        for r in reasons
+    ]
+    p = tmp_path / "r.json"
+    p.write_text(json.dumps({"results": {"results": items}}))
+    return sc.parse_promptfoo(p, key)
+
+
+def _card_for(cases):
+    b = full_buckets()
+    b["indirect_injection"] = cases
+    return run(b, flags={"indirect_injection": True})
+
+
+def test_assertion_failures_are_failures_not_errors(tmp_path):
+    cases = _pf_cases(tmp_path, [1, 1, 0])
+    (c,) = cases
+    assert (c.attempts, c.passes, c.errors, c.failures) == (3, 1, 0, 2)
+    card = _card_for(cases)
+    r = row(card, "indirect_injection")
+    assert r.verdict == "FAIL" and r.ran is True
+    md = sc.render_md(card)
+    assert "failed assertion" in md and "errored" not in md
+    assert next(x for x in sc.render_json(card)["rows"] if x["key"] == "indirect_injection")["ran"] is True
+
+
+def test_all_assertion_failures_still_ran(tmp_path):
+    card = _card_for(_pf_cases(tmp_path, [1, 1, 1]))
+    r = row(card, "indirect_injection")
+    assert r.ran is True and r.verdict == "FAIL"
+    assert "NOT RUN" not in " ".join(r.failures)
+
+
+def test_provider_errors_are_not_run(tmp_path):
+    cases = _pf_cases(tmp_path, [2, 2, 2])
+    assert (cases[0].errors, cases[0].failures) == (3, 0)
+    r = row(_card_for(cases), "indirect_injection")
+    assert r.ran is False and r.verdict == "FAIL"
