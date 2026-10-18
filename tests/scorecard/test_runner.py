@@ -293,3 +293,26 @@ def test_event_defaults_local_without_github(fake):
     _, _, tmp = fake
     _, _, js = _go(tmp, event="")
     assert js["event"] == "local"
+
+
+def test_dirty_flag_read_before_tracked_outputs_are_deleted(fake, monkeypatch):
+    """--out holds tracked scorecard files (evidence/week9). The runner deletes them
+    before scoring; git status taken after that would report a clean tree as dirty."""
+    _, _, tmp = fake
+    out = tmp / "o"
+    out.mkdir()
+    tracked = [out / "scorecard.md", out / "scorecard.json"]
+    for f in tracked:
+        f.write_text("committed\n")
+    real_run = sc.subprocess.run
+
+    def run(cmd, **kw):
+        if [str(c) for c in cmd[:2]] == ["git", "status"]:
+            gone = [f for f in tracked if not f.exists()]
+            text = "".join(f" D {f.name}\n" for f in gone)
+            return subprocess.CompletedProcess(cmd, 0, text, "")
+        return real_run(cmd, **kw)
+
+    monkeypatch.setattr(sc.subprocess, "run", run)
+    _, md, js = _go(tmp)
+    assert js["meta"]["dirty"] == "false" and "- dirty: false" in md

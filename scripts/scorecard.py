@@ -577,6 +577,9 @@ def run_main(argv) -> int:
                     default=os.environ.get("SCORECARD_EVENT") or None)
     args = ap.parse_args(argv)
     event = args.event or detect_event()  # empty means: ask GitHub's env, else local
+    # Read the tree state first: the previous scorecard in --out may be tracked
+    # (evidence/week9), and deleting it below would make a clean tree look dirty.
+    commit, dirty = _git_commit(), git_dirty()
 
     out = Path(args.out).resolve()
     raw = out / "raw"
@@ -651,8 +654,8 @@ def run_main(argv) -> int:
 
     meta = {
         "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-        "commit": _git_commit(),
-        "dirty": str(git_dirty()).lower(),
+        "commit": commit,
+        "dirty": str(dirty).lower(),
         **_app_header(),
         "promptfoo_version": PROMPTFOO_VERSION,
         "repeat": str(args.repeat),
