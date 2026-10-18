@@ -237,8 +237,9 @@ not an exact technique ID.
 - **Threat:** a security check reports green without having run (a skipped job, an
   empty result file, a stale report), or a detector scores the wrong thing, so the
   record says a defense held when nobody measured it.
-- **Status:** **controlled as of Week 9** for the gate itself; detector accuracy is
-  still checked by reading transcripts, not by the scorecard.
+- **Status:** **controlled as of Week 9** for the scorecard itself: it does not report
+  green for a row that did not run. It does not yet block a merge (RR-W9-5), and
+  detector accuracy is still checked by reading transcripts, not by the scorecard.
 - **Controls:** one scorecard (`scripts/scorecard.py`, data in
   `scripts/scorecard_config.py`) scores every suite into twelve rows with thresholds
   fixed before the first run. A required row that did not run is FAIL: skipped tests,
@@ -248,7 +249,10 @@ not an exact technique ID.
   PRs, where secrets are absent by design, the model rows are marked not required and
   the verdict reads "PASS (partial: model suites not run on fork PR)". Trajectory
   tests (`apps/api/tests/test_trajectories.py`) read `tool_calls` and
-  `pending_actions` from the database and assert the whole sequence.
+  `pending_actions` from the database and assert the whole sequence. The direct suite
+  scores the active template (`chat_active`), and a static `prompt_pin` check FAILs
+  if any gate config pins another version, so the header's template ref is the one
+  that was measured.
 - **Measurement:** `evidence/week9/scorecard.md` (run 2, repeat 10, PASS on every
   row) and `scorecard-run1-fail.md` (run 1, FAIL, kept as recorded). Model rows require
   every case in every run, but six of those cases (three direct, three indirect) are
@@ -257,8 +261,10 @@ not an exact technique ID.
 - **OWASP:** cross-cutting · **NIST:** Measure · **ATLAS:** none (process control).
 - **Residuals:** the CI gate needs the author's `ANTHROPIC_API_KEY` repository
   secret; without it the job fails on every push and same-repo PR, by design. The
-  scorecard scores what each detector reports, so a detector bug can still produce a
-  wrong row (RR-W9-3). See §5.
+  `scorecard` job is advisory until the author adds a ruleset on `main` requiring the
+  `scorecard`, `web` and `security` checks: today there is no branch protection, so a
+  red check does not block a merge (RR-W9-5, open). The scorecard scores what each
+  detector reports, so a detector bug can still produce a wrong row (RR-W9-3). See §5.
 
 ### Supply chain / model provenance
 - **Threat:** compromised dependency or a shift in the hosted model.
@@ -297,6 +303,7 @@ Every documented finding to date, with an honest status. "Closed" here means
 | RR-W9-2 | v0.8 was released on a failing build. Merge run 37713565008 failed `api` (ruff, 15 errors) and `security` (Trivy: `next` 16.3.3 CRITICAL GHSA-vcvr-r3jv-pc5j, `sharp` 0.35.4 HIGH, `source-map-js` 1.2.1 HIGH) | **Fixed** (wk9) | Commit `d7a9fff` clears the ruff errors and upgrades `next` to 16.3.8 with `sharp` and `source-map-js` overrides. Process change: `make ci` runs the same scorecard as CI (repeat 3) plus the web lint, tests and build, so a release can be checked locally first. Gitleaks still runs only in CI |
 | RR-W9-3 | Detector false positive: the indirect "image beacon" eval failed any reply that contained the beacon URL, including a URL shown inside inline code with a warning. Scorecard run 1 failed the case 2/10 (row 22/23) on replies that rendered no image | **Fixed** (wk9, detector) | The assertion now strips real code spans and fences, then applies the original two checks (no markdown image, no URL on the beacon host) to what remains (`b50635b`, tightened in `8dd3776`); regression tests in `tests/scorecard/test_beacon_assertion.py` include the two real replies and bypass cases. Under the old assertion run 2 would also have failed 4/10; run 2's PASS comes from the corrected detector, not different model behavior. Fifth time the project has had to apply "score the artifact, not the mention" |
 | RR-W9-4 | Pre-existing, found in week 9 review: `record_model_call` checks org membership and conversation ownership separately, but not that the conversation belongs to that org, so a user in two orgs could file an audit row under the wrong org | **Open** (low) | Backlog. Audit accuracy only, for the caller's own conversations; no cross-user read or write |
+| RR-W9-5 | Nothing makes the scorecard block a merge. `main` has no branch protection and no ruleset, so a red `scorecard` check is visible but does not stop a merge; the job is advisory | **Open** | The author. Add a ruleset on `main` that requires the `scorecard`, `web` and `security` checks. Not changed by the Week 9 branch |
 
 No finding is un-triaged. The "open, accepted" residuals are genuine and stated
 plainly rather than closed with a false fix.
@@ -326,7 +333,7 @@ gap map, not a gold star.
 | Govern | 3 | Clear ownership model, least-privilege RLS, versioned prompts; no formal policy doc beyond this |
 | Protect | 4 | Strongest area: RLS + app authz, redaction, structural prompt separation, output sanitizer, tool validation and rate caps, and (Week 8) a hash-locked, single-use approval gate for writes. Not a 5: the last decision on a write is a human's (RR-W8-1), and flag detection has known gaps (RR-W8-2) |
 | Detect | 1 | Weakest area, unchanged. The audit records more signals (approve/deny outcomes such as `hash_mismatch` and `expired`, the `pending_approval → approved → executed` trajectory), and the red team's orphan query (no executed write without an executed approval) can be run by hand. Nothing alerts on any of it, and RR-W8-3 means a user's own completion record is not trustworthy. Owned by Week 10 |
-| Assure | 3 | Now measured per release: one committed scorecard (`evidence/week9/scorecard.md`) with thresholds fixed before the first run, where a row that did not run fails. Week 9 also found that the earlier 3 rested partly on a CI eval gate that had never run (RR-W9-1), and that v0.8 shipped on a red build (RR-W9-2). Not a 4: the CI gate depends on the author's `ANTHROPIC_API_KEY` secret (until it is added, the `scorecard` job fails on `main` by design), detector accuracy still relies on reading transcripts (RR-W9-3), and there is no external audit |
+| Assure | 3 | Now measured per release: one committed scorecard (`evidence/week9/scorecard.md`) with thresholds fixed before the first run, where a row that did not run fails. Week 9 also found that the earlier 3 rested partly on a CI eval gate that had never run (RR-W9-1), and that v0.8 shipped on a red build (RR-W9-2). Not a 4: the CI gate depends on the author's `ANTHROPIC_API_KEY` secret (until it is added, the `scorecard` job fails on `main` by design), nothing yet requires that check before a merge (RR-W9-5), detector accuracy still relies on reading transcripts (RR-W9-3), and there is no external audit |
 
 The shape is deliberate: this phase invests in **protect**, and **detect** is
 knowingly thin until observability (Week 10).
@@ -571,8 +578,8 @@ ran, and "not run" is never a pass.
   deterministic rows, every case in every one of N runs for model rows, behavior
   unchanged for the pinned known residuals, 0 findings for platform hygiene. The
   header records commit, dirty flag, model id (from `app.config.CHAT_MODEL`),
-  template ref (from `app.prompting.CHAT_TEMPLATE.ref`), Promptfoo version and repeat
-  count. Recorded runs use repeat 10; CI uses repeat 3. Six model-row cases are judged
+  template ref (from `app.prompting.CHAT_TEMPLATE.ref`), grader model (from the
+  configs), Promptfoo version and repeat count. Recorded runs use repeat 10; CI uses repeat 3. Six model-row cases are judged
   by an LLM grader rather than by code, so "every case, every run" there rests partly
   on a second model's judgment (see `evals/README.md`). Maps to NIST **Measure**.
 - **Trajectory tests (new).** `apps/api/tests/test_trajectories.py` (7 tests) reads
@@ -638,10 +645,18 @@ ran, and "not run" is never a pass.
   to a false PASS before it shipped: the fork exemption hiding deterministic tests,
   missing sources, an unenforced repeat count, an all-error watch case, a global name
   override, stale outputs from an earlier run, event detection, the hidden artifact
-  directory CI did not upload, and failures counted as errors.
+  directory CI did not upload, and failures counted as errors. The final review found
+  more, fixed on the branch: the dirty flag was read after the tracked scorecard files
+  were deleted, so every clean run said dirty; the direct suite was pinned to `chat v6`
+  while the header reported the active template; a deleted fork crashed event
+  detection and an unreadable PR payload was treated as a fork; and escaped backticks
+  or a backtick in a fence info string could hide a beacon image. None of these
+  changes run 2's outputs or verdict.
 - **Residuals.** RR-W8-4 **closed**. RR-W9-1, RR-W9-2 and RR-W9-3 found and fixed this
   week. New, open and low: RR-W9-4 (`record_model_call` does not check that the
-  conversation belongs to the org). Unchanged and still open or accepted: RR-W2-1,
+  conversation belongs to the org). New and open: RR-W9-5 (no ruleset requires the
+  `scorecard`, `web` and `security` checks on `main`, so the scorecard is advisory
+  until the author adds one). Unchanged and still open or accepted: RR-W2-1,
   RR-W2-2, RR-W7-2, RR-W8-1, RR-W8-2, RR-W8-3 and RR-006. The Known residuals row (5/5)
   pins four redaction misses (RR-W2-1, RR-W2-2) and the RR-W3-1 payload-splitting
   canary; their behavior did not move. The other residuals are not in that row. The CI `scorecard` job has not yet

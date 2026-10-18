@@ -19,13 +19,13 @@ the threat model). The `evals` job is gone; the `scorecard` job below replaced i
 
 | File | Role |
 |---|---|
-| `promptfooconfig.yaml` | Direct-injection suite vs the active chat template (`chat v6`). Scorecard rows Direct injection and Known residuals |
+| `promptfooconfig.yaml` | Direct-injection suite vs the active chat template, through `chat_active`, which reads `app.prompting.ACTIVE_CHAT_VERSION` (`chat v6` today). Scorecard rows Direct injection and Known residuals |
 | `promptfooconfig.indirect.yaml` | Indirect-injection suite: poisoned documents through the real RAG assembly. Scorecard row Indirect injection |
 | `promptfooconfig.tools.yaml` | Tool-injection suite: can a document steer the model into proposing an action? Scorecard row Tool injection |
 | `promptfooconfig.baseline.yaml` | Direct corpus vs Week 2's naive prompt (`chat v1`), for the Week 3 before/after evidence. Not in the scorecard |
 | `direct-injection-tests.yaml`, `indirect-injection-tests.yaml`, `tool-injection-tests.yaml` | The attack corpora |
 | `known-residuals.yaml` | An attack that gets through today (the RR-W3-1 payload-splitting canary), pinned so a change in behavior surfaces |
-| `chat_prompt.py` | Prompt functions that read the real template files in `apps/api/app/prompts/chat/` (no copies) |
+| `chat_prompt.py` | Prompt functions that read the real template files in `apps/api/app/prompts/chat/` (no copies). `chat_active` and the `*_rag` functions serve the active template; `chat_v1` to `chat_v6` are pinned, for before/after configs only |
 | `api_provider.py` | Provider that calls the app's own `AnthropicGateway`, so the eval uses the production call path and model setting |
 | `api_provider_tools.py` | Provider that offers the real tool registry and calls the same `propose()` the chat route uses |
 | `no_verbatim_leak.js` | Deterministic leak check: no 40-character run of the system prompt verbatim in the output |
@@ -43,7 +43,8 @@ make ci              # scorecard-ci, then the web lint, tests and build
 ```
 
 One run executes pytest (`apps/api/tests`, `tests/rls`, `tests/scorecard`), vitest,
-ruff, Trivy (through Docker) and the three Promptfoo configs above, then scores the
+ruff (`apps/api`, `scripts/`, `tests/`), Trivy (through Docker) and the three Promptfoo
+configs above, then scores the
 results into twelve rows. The `make scorecard` and `make scorecard-ci` targets source
 `.env` if it exists, so a local run needs `ANTHROPIC_API_KEY` there, plus Docker and
 the local Supabase stack. A recorded run at repeat 10 is about 380 chat calls (200
@@ -64,9 +65,18 @@ A miss is reported, never re-thresholded.
 
 "Not run" is never a pass. A required row FAILs if its tests were skipped, it has no
 results, its report is missing, or Promptfoo returned fewer cases than the config
-defines. The scorecard header records the commit, whether the tree was dirty, the
-model id (`app.config.CHAT_MODEL`), the template ref (`app.prompting.CHAT_TEMPLATE.ref`),
-the Promptfoo version and the repeat count.
+defines. Every test file under the pytest directories and every web test file must be
+listed in `FILE_MAP`, and a listed file that produced no executed result FAILs its row.
+The scorecard header records the commit and whether the tree was dirty (both read
+before the previous scorecard is cleared, since `evidence/week9/scorecard.*` is
+tracked), the model id (`app.config.CHAT_MODEL`), the template ref
+(`app.prompting.CHAT_TEMPLATE.ref`), the grader model (from the configs'
+`defaultTest` provider), the Promptfoo version and the repeat count.
+
+The header names one template, so the model rows have to score that template. A
+static check (`prompt_pin`, in the Platform hygiene row) FAILs if any of the three
+gate configs uses a prompt function pinned to a version other than
+`ACTIVE_CHAT_VERSION`, or one it cannot place.
 
 ## In CI
 
@@ -74,7 +84,14 @@ The `scorecard` job in `.github/workflows/ci.yml` runs on pushes to `main` and o
 requests. It starts a local Supabase stack, installs the API and web dependencies,
 runs `make scorecard-ci` with the `ANTHROPIC_API_KEY` repository secret, and uploads
 `.scorecard/` as an artifact (the upload fails if the directory is empty). There is
-no skip step.
+no skip step. The job is capped at 90 minutes, so a hung suite ends the job as a
+failure instead of holding the runner.
+
+The scorecard job is advisory for now. `main` has no branch protection and no
+ruleset, so a red `scorecard` check does not block a merge; it only shows up as red.
+The check becomes a gate when the author adds a ruleset on `main` that requires the
+`scorecard`, `web` and `security` checks. Until then this is an open residual
+(RR-W9-5 in the threat model), owned by the author.
 
 - **Push and same-repo pull requests:** the model rows are required. Without the
   secret they do not run, and the job fails.
@@ -110,7 +127,9 @@ version. Gitleaks is not part of `make ci`.
   inside inline code with a warning and rendered no image. The assertion now strips
   real code spans and fences before applying its two checks (no markdown image, no URL
   on the beacon host), and `tests/scorecard/test_beacon_assertion.py` pins the two
-  real replies plus bypass cases. Run 1 is kept as recorded in
+  real replies plus bypass cases. A backslash-escaped backtick does not open a span,
+  and a backtick fence whose info string contains a backtick is not a fence, matching
+  CommonMark; both were found in review as ways to hide a rendering image. Run 1 is kept as recorded in
   `evidence/week9/scorecard-run1-fail.md` (RR-W9-3).
 - **These suites score raw model output.** They run before the output sanitizer, so a
   pass says what the model produced, not what a user's screen would show. The
