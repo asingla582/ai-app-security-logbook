@@ -588,3 +588,63 @@ def test_failed_with_error_and_no_failure_reason_is_an_error(tmp_path):
     ]}}))
     (case,) = sc.parse_promptfoo(p, "indirect_injection")
     assert (case.errors, case.failures) == (1, 0)
+
+
+# ---- final fix wave: the direct suite scores the active template, not a pinned one
+
+
+def _app_prompting():
+    import sys
+
+    sys.path.insert(0, str(sc.REPO / "apps" / "api"))
+    from app import prompting
+
+    return prompting
+
+
+def test_chat_active_serves_the_active_template():
+    import sys
+
+    sys.path.insert(0, str(sc.REPO / "evals"))
+    import chat_prompt
+
+    prompting = _app_prompting()
+    msgs = chat_prompt.chat_active({"vars": {"attack": "hi"}})
+    assert msgs[0] == {"role": "system", "content": prompting.CHAT_TEMPLATE.system}
+    assert msgs[1] == {"role": "user", "content": "hi"}
+
+
+def test_direct_config_uses_the_active_prompt_function():
+    import yaml
+
+    cfg = yaml.safe_load((sc.REPO / "evals" / "promptfooconfig.yaml").read_text())
+    assert cfg["prompts"] == ["file://chat_prompt.py:chat_active"]
+
+
+def _pf_config(tmp_path, name, fn):
+    p = tmp_path / name
+    p.write_text(f"prompts:\n  - file://chat_prompt.py:{fn}\ntests: []\n")
+    return str(p.relative_to(tmp_path))
+
+
+def test_prompt_pin_check_flags_a_stale_pinned_version(tmp_path):
+    cfg = _pf_config(tmp_path, "a.yaml", "chat_v6")
+    assert sc.prompt_pin_problems(tmp_path, 6, [cfg]) == []
+    problems = sc.prompt_pin_problems(tmp_path, 7, [cfg])
+    assert len(problems) == 1 and "chat_v6" in problems[0] and "7" in problems[0]
+
+
+def test_prompt_pin_check_accepts_active_functions_and_rejects_unknown(tmp_path):
+    ok = [_pf_config(tmp_path, f"{f}.yaml", f) for f in ("chat_active", "chat_v4_rag", "chat_v5_rag")]
+    assert sc.prompt_pin_problems(tmp_path, 9, ok) == []
+    odd = _pf_config(tmp_path, "odd.yaml", "my_prompt")
+    assert sc.prompt_pin_problems(tmp_path, 9, [odd])
+    (tmp_path / "empty.yaml").write_text("tests: []\n")
+    assert sc.prompt_pin_problems(tmp_path, 9, ["empty.yaml"])
+    assert sc.prompt_pin_problems(tmp_path, 9, ["missing.yaml"])
+    assert sc.prompt_pin_problems(tmp_path, None, ok)  # active version unknown
+
+
+def test_prompt_pin_check_passes_on_the_real_configs():
+    configs = [cfg for _, cfg in sc.PROMPTFOO_RUNS]
+    assert sc.prompt_pin_problems(sc.REPO, _app_prompting().ACTIVE_CHAT_VERSION, configs) == []

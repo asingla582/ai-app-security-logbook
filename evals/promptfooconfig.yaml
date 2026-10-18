@@ -1,10 +1,12 @@
 # Week 3 eval gate: the direct-injection corpus against the shipped chat prompt,
 # through the application's own gateway (evals/api_provider.py).
 # Run via `make eval` (needs ANTHROPIC_API_KEY).
-description: Direct prompt injection - shipped chat prompt (chat v6)
+description: Direct prompt injection - shipped chat prompt (active chat template)
 
 prompts:
-  - file://chat_prompt.py:chat_v6
+  # chat_active reads app.prompting.ACTIVE_CHAT_VERSION; the scorecard FAILs if a
+  # gate config pins a different version.
+  - file://chat_prompt.py:chat_active
 
 providers:
   - id: file://api_provider.py

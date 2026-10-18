@@ -316,3 +316,18 @@ def test_dirty_flag_read_before_tracked_outputs_are_deleted(fake, monkeypatch):
     monkeypatch.setattr(sc.subprocess, "run", run)
     _, md, js = _go(tmp)
     assert js["meta"]["dirty"] == "false" and "- dirty: false" in md
+
+
+def test_prompt_pin_problem_fails_the_scorecard(fake, monkeypatch):
+    _, _, tmp = fake
+    monkeypatch.setattr(sc, "prompt_pin_problems",
+                        lambda *a, **k: ["evals/promptfooconfig.yaml pins chat_v6, active is 7"])
+    code, md, js = _go(tmp)
+    row = _rows(js)["platform_hygiene"]
+    assert row["verdict"] == "FAIL" and js["verdict"] == "FAIL" and code == 1
+    assert any("prompt_pin" in f for f in row["failures"])
+    assert "pins chat_v6" in js["meta"]["notes"]
+
+
+def test_prompt_pin_case_is_required():
+    assert FILE_MAP["scorecard/prompt_pin"] == "platform_hygiene"

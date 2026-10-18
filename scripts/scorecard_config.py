@@ -50,6 +50,11 @@ PROMPTFOO_SOURCES = {
     "known_residuals": "evals/known-residuals.yaml",
 }
 
+# Prompt functions (evals/chat_prompt.py) that always serve the ACTIVE chat template:
+# chat_active reads ACTIVE_CHAT_VERSION, and the *_rag ones go through
+# assemble_chat_prompt. Any other gate prompt must be chat_v<ACTIVE_CHAT_VERSION>.
+ACTIVE_PROMPT_FUNCTIONS = frozenset({"chat_active", "chat_v4_rag", "chat_v5_rag"})
+
 # Promptfoo cases whose description starts with this are routed to known_residuals
 # (evals/promptfooconfig.yaml includes known-residuals.yaml).
 RESIDUAL_DESCRIPTION_PREFIX = "KNOWN RESIDUAL"
@@ -78,6 +83,10 @@ FILE_MAP: dict[str, str] = {
     # ruff and Trivy outcomes arrive as synthetic junit cases from the runner.
     "scorecard/ruff": "platform_hygiene",
     "scorecard/trivy": "platform_hygiene",
+    # The runner's static check that every gate config scores the active chat template.
+    # Platform hygiene, next to the other synthetic checks: in structural it would make
+    # that row look run when pytest never ran.
+    "scorecard/prompt_pin": "platform_hygiene",
     # Approval gate
     "tests/rls/test_pending_actions.py": "approval_gate",
     "apps/api/tests/test_actions.py": "approval_gate",

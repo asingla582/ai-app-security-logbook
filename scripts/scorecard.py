@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -22,6 +23,7 @@ from typing import Literal
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from scorecard_config import (
+    ACTIVE_PROMPT_FUNCTIONS,
     CATEGORIES,
     FILE_MAP,
     FORK_PR_OPTIONAL,
@@ -356,6 +358,40 @@ def config_case_counts(config_path) -> tuple[int, int]:
     return len(cases) - resid, resid
 
 
+_PINNED = re.compile(r"chat_v(\d+)")
+
+
+def prompt_pin_problems(root, active_version, configs) -> list[str]:
+    """Static check: every gate config's prompt function serves the active chat
+    template. A function pinned to another version, an unknown function, or a config
+    that cannot be read is a problem. Empty list means the check passed."""
+    import yaml
+
+    if active_version is None:
+        return ["active chat version unavailable (app.prompting did not import)"]
+    problems: list[str] = []
+    for cfg in configs:
+        try:
+            prompts = (yaml.safe_load((Path(root) / cfg).read_text()) or {}).get("prompts")
+        except (OSError, AttributeError, yaml.YAMLError) as e:
+            problems.append(f"{cfg}: cannot read prompts ({type(e).__name__})")
+            continue
+        if not prompts:
+            problems.append(f"{cfg}: no prompts entry")
+            continue
+        for entry in prompts:
+            ref = entry.get("id", "") if isinstance(entry, dict) else str(entry)
+            fn = ref.rsplit(":", 1)[-1] if ref.startswith("file://") and ref.count(":") >= 2 else ""
+            if fn in ACTIVE_PROMPT_FUNCTIONS:
+                continue
+            m = _PINNED.fullmatch(fn)
+            if not m:
+                problems.append(f"{cfg}: prompt {ref!r} has no known template version")
+            elif int(m.group(1)) != active_version:
+                problems.append(f"{cfg} pins {fn}, active is v{active_version}")
+    return problems
+
+
 # --------------------------------------------------------------- rendering
 
 def render_json(sc: Scorecard) -> dict:
@@ -565,15 +601,28 @@ def _app_header() -> dict[str, str]:
         return {"chat_model": f"unavailable ({type(e).__name__})", "template_ref": "unavailable"}
 
 
-def _hygiene_junit(path: Path, ruff: str, trivy: str) -> None:
-    """ruff and Trivy as junit testcases so the scoring path reads them like any test.
-    Outcome is passed / failed / skipped (skipped = the tool could not run)."""
+def _active_chat_version() -> int | None:
+    sys.path.insert(0, str(REPO / "apps" / "api"))
+    try:
+        from app.prompting import ACTIVE_CHAT_VERSION
+
+        return ACTIVE_CHAT_VERSION
+    except Exception:  # reported by prompt_pin_problems as a FAIL, never a pass
+        return None
+
+
+def _hygiene_junit(path: Path, outcomes: dict[str, str]) -> None:
+    """The runner's own checks (ruff, Trivy, prompt_pin) as junit testcases so the
+    scoring path reads them like any test. Outcome is passed / failed / skipped
+    (skipped = the tool could not run)."""
     def case(name, outcome):
         inner = {"passed": "", "failed": "<failure/>", "skipped": "<skipped/>"}[outcome]
-        return f'<testcase classname="hygiene" file="scorecard/{name}" name="{name}">{inner}</testcase>'
+        return (f'<testcase classname="hygiene" file="scorecard/{name}" name="{name}">'
+                f"{inner}</testcase>")
 
     path.write_text('<testsuites><testsuite name="hygiene">'
-                    + case("ruff", ruff) + case("trivy", trivy) + "</testsuite></testsuites>")
+                    + "".join(case(n, o) for n, o in outcomes.items())
+                    + "</testsuite></testsuites>")
 
 
 def run_main(argv) -> int:
@@ -636,8 +685,12 @@ def run_main(argv) -> int:
     else:
         notes.append("trivy not run: Docker unavailable")
         trivy = "skipped"
+    # Static: every gate config must score the active chat template (platform_hygiene row).
+    pins = prompt_pin_problems(REPO, _active_chat_version(), [cfg for _, cfg in PROMPTFOO_RUNS])
+    notes += [f"prompt_pin: {p}" for p in pins]
     hyg = raw / "hygiene.xml"
-    _hygiene_junit(hyg, ruff, trivy)
+    _hygiene_junit(hyg, {"ruff": ruff, "trivy": trivy,
+                         "prompt_pin": "failed" if pins else "passed"})
     score_argv += ["--junit", str(hyg)]
 
     # Promptfoo model suites. No key: do not run them and say why. Omitting --promptfoo
