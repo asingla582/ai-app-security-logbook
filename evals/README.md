@@ -77,8 +77,11 @@ tracked), the model id (`app.config.CHAT_MODEL`), the template ref
 rows came from (`model_source: live` or `committed`), and two content hashes:
 `evals_hash` (sha256 over the path and bytes of every `*.yaml`, `*.yml`, `*.py` and
 `*.js` under `evals/`, not this README and not `__pycache__`) and `app_prompt_hash`
-(the same over `apps/api/app/prompts/` plus the app modules the eval providers load:
-`prompting.py`, `gateway.py`, `tools.py`, `provenance.py` and `config.py`).
+(the same over the `*.md` templates in `apps/api/app/prompts/` plus the app modules
+the eval providers load: `prompting.py`, `gateway.py`, `tools.py`, `provenance.py` and
+`config.py`). Dotfiles (`.DS_Store`, editor swap files) are never hashed. The header
+also records the installed `anthropic` and `pydantic` versions for the reader; they
+are not part of the fingerprint, because CI installs them unpinned.
 
 The header names one template, so the model rows have to score that template. A
 static check (`prompt_pin`, in the Platform hygiene row) FAILs if any of the three
@@ -105,7 +108,7 @@ residuals) it reads `evidence/scorecard/model-latest.json` and accepts it only i
 of these hold:
 
 - the file exists and is valid JSON;
-- every model row in it is PASS;
+- every model row in it is PASS (a CHANGED known residual is rejected by CI);
 - it was measured at repeat 10 or more;
 - every fingerprint field in its header (`template_ref`, `chat_model`,
   `grader_model`, `promptfoo_version`, `evals_hash`, `app_prompt_hash`) is present
@@ -127,7 +130,16 @@ same.
 
 **What a release requires.** Run `make scorecard` locally on the final code (paid,
 repeat 10), check that it passed, and commit `evidence/scorecard/model-latest.json`
-with the weekly evidence. Fork PRs get the same full check, since no secret is
+with the weekly evidence. The live run refuses to write that file, and FAILs, if any
+hashed path is modified or untracked in git (commit or delete the file and run
+again), or if the fingerprint changed while the suites ran. It prints "do not
+commit" if any model row is not PASS or the verdict is FAIL, since CI would reject
+the evidence.
+
+**Stale, not forged.** The check catches stale evidence, not forged evidence. The
+file is self-attested: anyone who can commit could paste the current fingerprint into
+an old `model-latest.json` and CI would pass it. A `model-latest.json` diff must be
+reviewed like code. Fork PRs get the same full check, since no secret is
 involved; there is no partial verdict in this mode.
 
 **Expected state right now.** No `model-latest.json` has been committed yet. Run 2's
