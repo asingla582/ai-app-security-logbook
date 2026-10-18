@@ -138,6 +138,7 @@ def test_wrong_hash_then_right_hash(alice_client):
     conv, org_id, pa = _note_turn(alice_client)
     r = alice_client.post(f"/actions/{pa['id']}/approve", json={"args_sha256": "f" * 64})
     assert r.status_code == 409
+    assert trajectory(conv) == [("create_note", "pending_approval")]
     assert [p[1] for p in _pending(conv)] == ["pending"]
     assert _notes(org_id) == []
 
@@ -151,7 +152,9 @@ def test_wrong_hash_then_right_hash(alice_client):
 def test_no_executed_write_without_executed_approval(alice_client):
     # Drive one approved write so the sweep has something to check, then sweep the DB.
     conv, _, pa = _note_turn(alice_client)
-    alice_client.post(f"/actions/{pa['id']}/approve", json={"args_sha256": pa["args_sha256"]})
+    r = alice_client.post(f"/actions/{pa['id']}/approve", json={"args_sha256": pa["args_sha256"]})
+    assert r.status_code == 200 and r.json()["status"] == "executed"
+    assert trajectory(conv) == [("create_note", "executed")]
     with psycopg.connect(_DB_URL) as conn:
         orphans = conn.execute(
             "select t.id from tool_calls t where t.tool_name = 'create_note'"
