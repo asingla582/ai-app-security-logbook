@@ -107,8 +107,10 @@ def test_header_records_dirty_tree(fake):
     state["dirty"] = True
     _, md, js = _go(tmp)
     assert js["meta"]["dirty"] == "true" and "- dirty: true" in md
-    for k in ("date", "commit", "chat_model", "template_ref", "promptfoo_version", "repeat"):
+    for k in ("date", "commit", "chat_model", "template_ref", "promptfoo_version", "repeat",
+              "grader_model"):
         assert js["meta"][k]
+    assert f"- grader_model: {js['meta']['grader_model']}" in md
     assert js["event"] == "push"
 
 

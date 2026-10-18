@@ -392,6 +392,25 @@ def prompt_pin_problems(root, active_version, configs) -> list[str]:
     return problems
 
 
+def grader_model(root, configs) -> str:
+    """The llm-rubric grader model(s), from each config's defaultTest.options.provider.
+    Read from the configs, never hardcoded. A config with no grader adds nothing."""
+    import yaml
+
+    models: set[str] = set()
+    for cfg in configs:
+        try:
+            data = yaml.safe_load((Path(root) / cfg).read_text()) or {}
+            prov = ((data.get("defaultTest") or {}).get("options") or {}).get("provider")
+        except (OSError, AttributeError, yaml.YAMLError) as e:
+            return f"unavailable ({cfg}: {type(e).__name__})"
+        if isinstance(prov, dict):
+            prov = prov.get("id")
+        if prov:
+            models.add(str(prov).rsplit(":", 1)[-1])
+    return ", ".join(sorted(models)) or "none"
+
+
 # --------------------------------------------------------------- rendering
 
 def render_json(sc: Scorecard) -> dict:
@@ -717,6 +736,7 @@ def run_main(argv) -> int:
         "commit": commit,
         "dirty": str(dirty).lower(),
         **_app_header(),
+        "grader_model": grader_model(REPO, [cfg for _, cfg in PROMPTFOO_RUNS]),
         "promptfoo_version": PROMPTFOO_VERSION,
         "repeat": str(args.repeat),
     }

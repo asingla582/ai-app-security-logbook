@@ -648,3 +648,20 @@ def test_prompt_pin_check_accepts_active_functions_and_rejects_unknown(tmp_path)
 def test_prompt_pin_check_passes_on_the_real_configs():
     configs = [cfg for _, cfg in sc.PROMPTFOO_RUNS]
     assert sc.prompt_pin_problems(sc.REPO, _app_prompting().ACTIVE_CHAT_VERSION, configs) == []
+
+
+def test_grader_model_read_from_configs(tmp_path):
+    a = tmp_path / "a.yaml"
+    a.write_text("defaultTest:\n  options:\n    provider: anthropic:messages:grader-x\n")
+    b = tmp_path / "b.yaml"
+    b.write_text("defaultTest:\n  assert: []\n")  # no grader: contributes nothing
+    c = tmp_path / "c.yaml"
+    c.write_text("defaultTest:\n  options:\n    provider:\n      id: anthropic:messages:grader-y\n")
+    assert sc.grader_model(tmp_path, ["a.yaml", "b.yaml"]) == "grader-x"
+    assert sc.grader_model(tmp_path, ["a.yaml", "c.yaml"]) == "grader-x, grader-y"
+    assert sc.grader_model(tmp_path, ["b.yaml"]) == "none"
+    assert sc.grader_model(tmp_path, ["missing.yaml"]).startswith("unavailable")
+
+
+def test_grader_model_on_the_real_configs():
+    assert sc.grader_model(sc.REPO, [c for _, c in sc.PROMPTFOO_RUNS]) == "claude-haiku-4-5-20251001"
