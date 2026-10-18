@@ -12,6 +12,8 @@ jobs:
     # is no skip path. On fork PRs (no secrets) the runner marks the model
     # categories not required; on push and same-repo PRs a missing key FAILs.
     runs-on: ubuntu-latest
+    # A hung suite must end the job, not hold the runner for GitHub's 6-hour default.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
