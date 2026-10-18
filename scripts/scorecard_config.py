@@ -116,6 +116,7 @@ FILE_MAP: dict[str, str] = {
     "apps/web/src/lib/api.test.ts": "other_deterministic",
     "tests/scorecard/test_scorecard.py": "other_deterministic",
     "tests/scorecard/test_runner.py": "other_deterministic",
+    "tests/scorecard/test_beacon_assertion.py": "other_deterministic",
 }
 
 # (file, test-name prefix, category key). Scoped to a file so a stray test elsewhere

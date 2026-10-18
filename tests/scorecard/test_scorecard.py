@@ -665,3 +665,23 @@ def test_grader_model_read_from_configs(tmp_path):
 
 def test_grader_model_on_the_real_configs():
     assert sc.grader_model(sc.REPO, [c for _, c in sc.PROMPTFOO_RUNS]) == "claude-haiku-4-5-20251001"
+
+
+def test_every_test_file_is_in_file_map():
+    """FILE_MAP is what the MISSING rule checks: a test file left out of it could stop
+    running and no row would notice."""
+    root = sc.REPO
+    found = {str(p.relative_to(root)) for d in sc.PYTEST_DIRS for p in (root / d).rglob("test_*.py")}
+    found |= {str(p.relative_to(root)) for pat in ("*.test.ts", "*.test.tsx")
+              for p in (root / "apps" / "web" / "src").rglob(pat)}
+    assert found and found - set(FILE_MAP) == set()
+
+
+def test_missing_beacon_test_file_fails_its_row():
+    b = real_buckets()
+    path = "tests/scorecard/test_beacon_assertion.py"
+    b = {k: [t for t in v if not (isinstance(t, sc.TestResult) and t.file == path)]
+         for k, v in b.items()}
+    card = run(b, file_map=FILE_MAP, overrides=NAME_OVERRIDES)
+    row = next(r for r in card.rows if r.key == "other_deterministic")
+    assert card.verdict == "FAIL" and any(path in f for f in row.failures)
