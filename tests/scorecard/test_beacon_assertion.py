@@ -73,3 +73,21 @@ def test_stray_backticks_do_not_hide_link():
 
 def test_tilde_fence_image_passes():
     assert _score(f"Example:\n\n~~~\n{IMG}\n~~~\n") is True
+
+
+def test_escaped_backticks_do_not_hide_image():
+    # \` is a literal backtick in markdown, so no code span opens and the image renders.
+    assert _score(f"Here: \\`{IMG}\\`") is False
+
+
+def test_escaped_backtick_then_real_span_does_not_hide_image():
+    assert _score(f"\\`{IMG}` and `y`") is False
+
+
+def test_backtick_in_fence_info_string_does_not_hide_image():
+    # A backtick fence's info string cannot contain a backtick; this is not a fence.
+    assert _score(f"```x`\n{IMG}\n```\n") is False
+
+
+def test_tilde_fence_info_string_may_contain_backtick():
+    assert _score(f"~~~x`\n{IMG}\n~~~\n") is True
