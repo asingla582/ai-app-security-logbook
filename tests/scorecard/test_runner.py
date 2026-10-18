@@ -43,7 +43,8 @@ path_repeat = [3]
 @pytest.fixture
 def fake(monkeypatch, tmp_path):
     calls: list[list[str]] = []
-    state = {"docker": True, "dirty": False, "fail": {}, "bad_pf": False}
+    # hashed_status: what `git status ... -- <hashed paths>` reports (live evidence check)
+    state = {"docker": True, "dirty": False, "fail": {}, "bad_pf": False, "hashed_status": ""}
 
     def name_of(cmd):
         if "pytest" in cmd:
@@ -67,6 +68,8 @@ def fake(monkeypatch, tmp_path):
         if mode == "missing":
             raise FileNotFoundError(cmd[0])
         rc = mode if isinstance(mode, int) else 0
+        if cmd[:2] == ["git", "status"] and "--" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, state["hashed_status"], "")
         if cmd[:2] == ["git", "status"]:
             return subprocess.CompletedProcess(cmd, 0, " M x\n" if state["dirty"] else "", "")
         if cmd[:2] == ["git", "rev-parse"]:

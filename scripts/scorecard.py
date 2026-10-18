@@ -499,22 +499,42 @@ EVALS_SUFFIXES = (".yaml", ".yml", ".py", ".js")
 # prompting.py and gateway.py, plus every other app module the eval providers
 # (evals/*.py) load: tool schemas (tools.py), untrusted-content fences (provenance.py)
 # and the model id / output cap (config.py) also shape what the model sees.
+# All of config.py is hashed on purpose, not just the two settings the model sees: it
+# fails closed. An unrelated edit there (say a rate-limit default) forces a re-run,
+# which costs money, but a relevant edit can never slip past as fresh.
 APP_PROMPT_FILES = tuple(f"apps/api/app/{m}.py" for m in (
     "prompting", "gateway", "tools", "provenance", "config"))
+PROMPTS_DIR = "apps/api/app/prompts"
+PROMPTS_SUFFIXES = (".md",)
+# What the hash walk covers, as git pathspecs (the live run checks they are clean).
+HASHED_PATHS = ("evals", PROMPTS_DIR, *APP_PROMPT_FILES)
 
 
-def _files_under(root: Path, sub: str, suffixes=None) -> list[str]:
+def _is_hashed(rel: str) -> bool:
+    """Whether a repo-relative path is part of the fingerprint. One rule for the hash
+    walk and for the live run's clean-tree check. Dotfiles (.DS_Store, editor swap
+    files) and __pycache__ never are."""
+    parts = rel.split("/")
+    if any(x.startswith(".") or x == "__pycache__" for x in parts):
+        return False
+    if rel in APP_PROMPT_FILES:
+        return True
+    if rel.startswith(PROMPTS_DIR + "/"):
+        return Path(rel).suffix in PROMPTS_SUFFIXES
+    if rel.startswith("evals/"):
+        return Path(rel).suffix in EVALS_SUFFIXES and parts[-1].upper() != "README.MD"
+    return False
+
+
+def _files_under(root: Path, sub: str) -> list[str]:
     base = root / sub
     if not base.is_dir():
         return []
     out = []
     for p in base.rglob("*"):
-        rel = p.relative_to(root)
-        if not p.is_file() or "__pycache__" in rel.parts:
-            continue
-        if suffixes is not None and p.suffix not in suffixes:
-            continue
-        out.append(rel.as_posix())
+        rel = p.relative_to(root).as_posix()
+        if p.is_file() and _is_hashed(rel):
+            out.append(rel)
     return out
 
 
@@ -532,17 +552,54 @@ def _hash_files(root: Path, rels) -> str:
 def evals_hash(root) -> str:
     """Every file under evals/ that affects scoring (*.yaml, *.yml, *.py, *.js). README
     and __pycache__ are excluded: they cannot change a verdict."""
-    root = Path(root)
-    return _hash_files(root, [r for r in _files_under(root, "evals", EVALS_SUFFIXES)
-                              if Path(r).name.upper() != "README.MD"])
+    return _hash_files(Path(root), _files_under(Path(root), "evals"))
 
 
 def app_prompt_hash(root) -> str:
     """The chat templates plus the app code the model suites load: what the model sees."""
     root = Path(root)
-    rels = _files_under(root, "apps/api/app/prompts")
+    rels = _files_under(root, PROMPTS_DIR)
     rels += [f for f in APP_PROMPT_FILES if (root / f).is_file()]
     return _hash_files(root, rels)
+
+
+def unclean_hashed_paths(root=None) -> list[str]:
+    """Hashed paths that are modified, deleted or untracked (or ignored) in git. Evidence
+    measured on such a tree could not be reproduced from any commit, so a live run
+    refuses to record it. Untracked files stay in the hash on purpose: a file the
+    suites loaded must be visible, so the fix is to commit or delete it."""
+    root = Path(root or REPO)
+    code, out = _sh(["git", "status", "--porcelain", "--untracked-files=all", "--ignored",
+                     "--", *HASHED_PATHS], cwd=root, timeout=60)
+    if code != 0:
+        return [f"<git status failed, exit {code}>"]
+    bad: set[str] = set()
+    for line in out.splitlines():
+        if len(line) < 4:
+            continue
+        for path in line[3:].split(" -> "):  # a rename names both sides
+            path = path.strip().strip('"')
+            if path.endswith("/"):  # a whole untracked or ignored directory
+                if _files_under(root, path.rstrip("/")):
+                    bad.add(path)
+            elif _is_hashed(path):
+                bad.add(path)
+    return sorted(bad)
+
+
+def dependency_versions() -> dict[str, str]:
+    """Installed versions of the libraries on the model call path. Recorded in the
+    header for the reader, NOT fingerprinted: CI installs them unpinned, so comparing
+    them would make every merge stale."""
+    from importlib import metadata
+
+    out = {}
+    for pkg in ("anthropic", "pydantic"):
+        try:
+            out[f"{pkg}_version"] = metadata.version(pkg)
+        except metadata.PackageNotFoundError:
+            out[f"{pkg}_version"] = "not installed"
+    return out
 
 
 @dataclass
@@ -558,6 +615,11 @@ def _case(d) -> CaseResult | None:
         return None
     vals = [d.get(f) for f in ("attempts", "passes", "errors", "failures")]
     if not all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in vals):
+        return None
+    attempts, passes, errors, failures = vals
+    # Each attempt is exactly one of pass, error or failed assertion (as _load_cases
+    # counts them), so anything else, e.g. passes > attempts, is not a real result.
+    if passes + errors + failures != attempts:
         return None
     return CaseResult(d["key"], *vals)
 
@@ -727,6 +789,9 @@ def main(argv=None) -> int:
                     help="score the model rows from committed evidence (no Promptfoo)")
     ap.add_argument("--write-model-evidence", default=None, metavar="PATH",
                     help="also write the model rows and fingerprint here (live runs)")
+    ap.add_argument("--evidence-refused", action="append", default=[], metavar="REASON",
+                    help="the runner found the measurement unsafe to record: do not write"
+                         " model evidence, and FAIL")
     args = ap.parse_args(argv)
     if args.committed and (args.promptfoo or args.repeat is not None):
         ap.error("--committed takes the model results and repeat from the committed file;"
@@ -807,10 +872,23 @@ def main(argv=None) -> int:
                row_notes=row_notes, fork_optional=not args.committed)
     if missing_sources:
         sc.verdict = "FAIL"  # an unreadable source is never a pass
-    if args.write_model_evidence:
+    if args.evidence_refused:
+        reason = "; ".join(args.evidence_refused)
+        sc.verdict = "FAIL"  # a measurement that cannot be recorded honestly is not a pass
+        sc.meta["model_evidence"] = f"NOT WRITTEN: {reason}"
+        print(f"MODEL EVIDENCE NOT WRITTEN: {reason}", file=sys.stderr)
+    elif args.write_model_evidence:
         dest = Path(args.write_model_evidence)
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(json.dumps(model_evidence(sc, buckets), indent=2) + "\n")
+        not_pass = [f"{r.key}={r.verdict}" for r in sc.rows
+                    if r.key in MODEL_ROWS and r.verdict != "PASS"]
+        if not_pass:
+            print(f"WARNING: model evidence is not all PASS ({', '.join(not_pass)}); "
+                  f"CI will reject it; do not commit {dest}", file=sys.stderr)
+        if sc.verdict == "FAIL":
+            print(f"WARNING: scorecard verdict is FAIL; do not commit {dest}",
+                  file=sys.stderr)
 
     md = render_md(sc)
     if args.out:
@@ -941,6 +1019,11 @@ def run_main(argv) -> int:
     evidence = Path(args.model_evidence or (REPO / MODEL_LATEST_REL)).resolve()
     if not committed and args.model_evidence:
         evidence.unlink(missing_ok=True)  # never leave an older run's evidence behind
+        early = unclean_hashed_paths()
+        if early:  # say so before the paid suites run; the check is repeated after them
+            print("WARNING: hashed paths are not clean (" + ", ".join(early) + "); model "
+                  "evidence will not be written unless that is fixed before the run ends",
+                  file=sys.stderr)
 
     out = Path(args.out).resolve()
     raw = out / "raw"
@@ -1023,12 +1106,25 @@ def run_main(argv) -> int:
         notes.append("model suites not run: ANTHROPIC_API_KEY is not set"
                      + ("" if event == "fork_pr" else " (required on this event, so FAIL)"))
 
+    # Live evidence is recorded only for a measurement the fingerprint describes: the
+    # hashed paths must be clean in git, and must not have changed while the suites ran.
+    refused: list[str] = []
+    if not committed and args.model_evidence:
+        after = current_fingerprint()
+        moved = [f for f in FINGERPRINT_FIELDS if after.get(f) != fingerprint.get(f)]
+        if moved:
+            refused.append("the tree changed during the run (" + ", ".join(moved) + ")")
+        unclean = unclean_hashed_paths()
+        if unclean:
+            refused.append("hashed paths modified or untracked in git ("
+                           + ", ".join(unclean) + "); commit or remove them and re-run")
     meta = {
         "date": datetime.now(UTC).strftime("%Y-%m-%d"),
         "commit": commit,
         "dirty": str(dirty).lower(),
         "model_source": args.model_source,
         **fingerprint,
+        **dependency_versions(),
     }
     if not committed:
         meta["repeat"] = str(args.repeat)
@@ -1040,6 +1136,8 @@ def run_main(argv) -> int:
         return main(score_argv + ["--event", event, "--out", str(out)])
     if args.model_evidence:
         score_argv += ["--write-model-evidence", str(evidence)]
+        for r in refused:
+            score_argv += ["--evidence-refused", r]
     return main(score_argv + ["--repeat", str(args.repeat), "--event", event,
                               "--out", str(out)])
 

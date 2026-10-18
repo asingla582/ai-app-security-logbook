@@ -3,6 +3,9 @@
 !.env.example
 docs/
 
+# macOS Finder metadata (would otherwise change local content hashes)
+.DS_Store
+
 # Python
 __pycache__/
 *.pyc
