@@ -103,16 +103,20 @@ TRIVY_OUT ?= .trivy.json
 trivy:
 	docker run --rm -v "$$PWD":/src aquasec/trivy:0.76.0 fs --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 --format json -o /src/$(TRIVY_OUT) /src
 
-# One command runs every suite and scores them: evidence/week9/scorecard.md|json at repeat 10.
+# Local, per release, PAID: runs every suite including the model suites at repeat 10.
+# Writes evidence/week9/scorecard.md|json and evidence/scorecard/model-latest.json (the
+# model rows plus the fingerprint). Commit model-latest.json: CI checks it is fresh.
 # The event comes from SCORECARD_EVENT (local, push, pull_request, fork_pr); empty means detect from GitHub's env, else local.
 scorecard:
-	mkdir -p evidence/week9
-	if [ -f .env ]; then set -a; . ./.env; set +a; fi; $(PYTHON) scripts/scorecard.py run --repeat 10 --out evidence/week9 $(if $(SCORECARD_EVENT),--event $(SCORECARD_EVENT))
+	mkdir -p evidence/week9 evidence/scorecard
+	if [ -f .env ]; then set -a; . ./.env; set +a; fi; $(PYTHON) scripts/scorecard.py run --repeat 10 --out evidence/week9 --model-evidence evidence/scorecard/model-latest.json $(if $(SCORECARD_EVENT),--event $(SCORECARD_EVENT))
 
-# Same at repeat 3 for CI; output goes to $(SCORECARD_OUT) (gitignored).
+# CI: no model calls and no key. Runs the deterministic suites live and scores the model
+# rows from evidence/scorecard/model-latest.json, which FAILs unless it is complete, all
+# PASS, repeat >= 10, and its fingerprint matches this tree. Output to $(SCORECARD_OUT) (gitignored).
 scorecard-ci:
 	mkdir -p $(SCORECARD_OUT)
-	if [ -f .env ]; then set -a; . ./.env; set +a; fi; $(PYTHON) scripts/scorecard.py run --repeat 3 --out $(SCORECARD_OUT) $(if $(SCORECARD_EVENT),--event $(SCORECARD_EVENT))
+	if [ -f .env ]; then set -a; . ./.env; set +a; fi; $(PYTHON) scripts/scorecard.py run --model-source committed --out $(SCORECARD_OUT) $(if $(SCORECARD_EVENT),--event $(SCORECARD_EVENT))
 
 # The full CI gate: scorecard, then the web checks.
 ci: scorecard-ci

@@ -36,8 +36,9 @@ CATEGORIES: list[Category] = [
     Category("other_deterministic", "Other deterministic", "deterministic", DET, True),
 ]
 
-# On a fork PR, secrets are unavailable by design, so these rows are not required
-# (spec "Settled" item 2). Everything else is required on every event.
+# The rows with a Promptfoo half. In a live run on a fork PR, secrets are unavailable by
+# design, so these rows are not required (spec "Settled" item 2). In committed mode (CI)
+# no secret is needed, so they are required on every event, fork PRs included.
 FORK_PR_OPTIONAL = frozenset(
     {"direct_injection", "indirect_injection", "tool_injection", "known_residuals"}
 )
@@ -118,6 +119,7 @@ FILE_MAP: dict[str, str] = {
     "tests/scorecard/test_scorecard.py": "other_deterministic",
     "tests/scorecard/test_runner.py": "other_deterministic",
     "tests/scorecard/test_beacon_assertion.py": "other_deterministic",
+    "tests/scorecard/test_committed.py": "other_deterministic",
 }
 
 # (file, test-name prefix, category key). Scoped to a file so a stray test elsewhere

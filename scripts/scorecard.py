@@ -8,6 +8,7 @@ means not run, and a required row that did not run fails the verdict.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -80,6 +81,7 @@ class Row:
     sources: list[str] = field(default_factory=list)
     attempts: int = 0
     changed: list[str] = field(default_factory=list)
+    note: str = ""  # where the model half's evidence came from (committed mode)
 
 
 @dataclass
@@ -217,16 +219,18 @@ def categorize(results, file_map=FILE_MAP, overrides=NAME_OVERRIDES) -> dict[str
 
 # ----------------------------------------------------------------- scoring
 
-def _row(cat, items, ran_flag, event, repeat, expected, paths, missing, pins=False) -> Row:
+def _row(cat, items, ran_flag, event, repeat, expected, paths, missing, pins=False,
+         fork_optional=True, extra=(), note="") -> Row:
     tests = [i for i in items if isinstance(i, TestResult)]
     cases = [i for i in items if isinstance(i, CaseResult)]
     if cases and repeat is None:
         raise ValueError("score() needs the expected repeat N when promptfoo cases are present")
     watch = cat.kind == "watch"
     has_half = cat.key in FORK_PR_OPTIONAL  # has a Promptfoo half
-    model_required = has_half and event != "fork_pr"
+    excused = event == "fork_pr" and fork_optional  # fork PR: the model half is optional
+    model_required = has_half and not excused
     executed = [t for t in tests if t.outcome != "skipped"]
-    hard: list[str] = []
+    hard: list[str] = list(extra)  # caller-supplied failures, e.g. stale committed evidence
     changed: list[str] = []
 
     # Deterministic half: required on every event, scored independently of Promptfoo.
@@ -285,16 +289,24 @@ def _row(cat, items, ran_flag, event, repeat, expected, paths, missing, pins=Fal
     if cat.key in PROMPTFOO_SOURCES:
         sources.append(PROMPTFOO_SOURCES[cat.key])
     return Row(cat.key, cat.title, cat.kind, cat.threshold,
-               cat.required and not (event == "fork_pr" and has_half),
-               ran, runs, passed, total, verdict, hard, sources, attempts, changed)
+               cat.required and not (excused and has_half),
+               ran, runs, passed, total, verdict, hard, sources, attempts, changed,
+               note if verdict == "PASS" else "")
 
 
 def score(categories, buckets, ran_flags, event, meta=None, repeat=None,
-          expected_cases=None, file_map=FILE_MAP, overrides=NAME_OVERRIDES) -> Scorecard:
+          expected_cases=None, file_map=FILE_MAP, overrides=NAME_OVERRIDES,
+          row_failures=None, row_notes=None, fork_optional=True) -> Scorecard:
     """`repeat` is the N every Promptfoo case must have run. `expected_cases` maps a
     category key to how many cases its run should contain. Every file in `file_map`
-    must contribute at least one executed result, or its row FAILs."""
+    must contribute at least one executed result, or its row FAILs.
+
+    `row_failures` adds hard failures to a row (key -> messages); `row_notes` says where
+    a row's evidence came from, shown only on a PASS. `fork_optional=False` removes the
+    fork-PR exemption for the model halves (committed mode needs no secret)."""
     ran_flags = ran_flags or {}
+    row_failures = row_failures or {}
+    row_notes = row_notes or {}
     paths_by_key: dict[str, list[str]] = {}
     for path, key in file_map.items():
         paths_by_key.setdefault(key, []).append(path)
@@ -318,10 +330,13 @@ def score(categories, buckets, ran_flags, event, meta=None, repeat=None,
         paths = paths_by_key.get(cat.key, [])
         missing = [p for p in paths if p not in seen] + pin_missing.get(cat.key, [])
         rows.append(_row(cat, buckets.get(cat.key, []), ran_flags.get(cat.key, True),
-                         event, repeat, expected_cases, paths, missing, cat.key in pinned))
+                         event, repeat, expected_cases, paths, missing, cat.key in pinned,
+                         fork_optional, row_failures.get(cat.key, ()),
+                         row_notes.get(cat.key, "")))
     if any(r.verdict == "FAIL" for r in rows):
         verdict = "FAIL"
-    elif event == "fork_pr" and any(r.key in FORK_PR_OPTIONAL and not r.ran for r in rows):
+    elif (event == "fork_pr" and fork_optional
+          and any(r.key in FORK_PR_OPTIONAL and not r.ran for r in rows)):
         verdict = PARTIAL_FORK
     else:
         verdict = "PASS"
@@ -427,6 +442,7 @@ def render_json(sc: Scorecard) -> dict:
                 "ran": r.ran, "runs": r.runs, "attempts": r.attempts, "passed": r.passed,
                 "total": r.total, "threshold": r.threshold, "verdict": r.verdict,
                 "failures": r.failures, "changed": r.changed, "sources": r.sources,
+                "note": r.note,
             }
             for r in sc.rows
         ],
@@ -448,17 +464,210 @@ def render_md(sc: Scorecard) -> str:
             f"| {r.title} | {r.kind} | {'yes' if r.ran else 'NO'} | {r.runs} | "
             f"{r.passed}/{r.total} | {r.threshold} | {r.verdict} | {src} |"
         )
-    detail = [r for r in sc.rows if r.failures or r.changed or not r.ran]
+    detail = [r for r in sc.rows if r.failures or r.changed or not r.ran or r.note]
     if detail:
         lines += ["", "## Details", ""]
         for r in detail:
             lines.append(f"### {r.title}")
+            if r.note:
+                lines.append(f"- model evidence: {r.note}")
             if not r.ran:
                 lines.append("- NOT RUN (skipped or no results). Not run is never a pass.")
             lines += [f"- {f}" for f in r.failures]
             lines += [f"- CHANGED: {c}" for c in r.changed]
             lines.append("")
     return "\n".join(lines) + "\n"
+
+
+# ------------------------------------------------ committed model evidence
+# CI makes no model calls. The model suites run locally (`make scorecard`, repeat 10),
+# which writes evidence/scorecard/model-latest.json; CI reads it back and accepts it
+# only if it is complete, all PASS, repeat >= 10, and its fingerprint equals the one
+# computed from the tree being merged. Content-based, not commit-based: the evidence is
+# committed after the run, so its commit can never be the commit under test.
+
+MODEL_LATEST_REL = "evidence/scorecard/model-latest.json"
+MIN_COMMITTED_REPEAT = 10
+# The header fields that say what was measured. Each must be present in the committed
+# header and equal the value computed now.
+FINGERPRINT_FIELDS = ("template_ref", "chat_model", "grader_model", "promptfoo_version",
+                      "evals_hash", "app_prompt_hash")
+# Rows with a Promptfoo half, in scorecard order.
+MODEL_ROWS = [c.key for c in CATEGORIES if c.key in FORK_PR_OPTIONAL]
+REMEDY = f"run `make scorecard` locally and commit {MODEL_LATEST_REL}"
+EVALS_SUFFIXES = (".yaml", ".yml", ".py", ".js")
+# prompting.py and gateway.py, plus every other app module the eval providers
+# (evals/*.py) load: tool schemas (tools.py), untrusted-content fences (provenance.py)
+# and the model id / output cap (config.py) also shape what the model sees.
+APP_PROMPT_FILES = tuple(f"apps/api/app/{m}.py" for m in (
+    "prompting", "gateway", "tools", "provenance", "config"))
+
+
+def _files_under(root: Path, sub: str, suffixes=None) -> list[str]:
+    base = root / sub
+    if not base.is_dir():
+        return []
+    out = []
+    for p in base.rglob("*"):
+        rel = p.relative_to(root)
+        if not p.is_file() or "__pycache__" in rel.parts:
+            continue
+        if suffixes is not None and p.suffix not in suffixes:
+            continue
+        out.append(rel.as_posix())
+    return out
+
+
+def _hash_files(root: Path, rels) -> str:
+    """sha256 over the sorted (path, bytes) pairs, length-framed so no two different
+    trees can produce the same byte stream. A rename changes the hash."""
+    h = hashlib.sha256()
+    for rel in sorted(set(rels)):
+        data = (root / rel).read_bytes()
+        h.update(f"{rel}\0{len(data)}\0".encode())
+        h.update(data)
+    return h.hexdigest()
+
+
+def evals_hash(root) -> str:
+    """Every file under evals/ that affects scoring (*.yaml, *.yml, *.py, *.js). README
+    and __pycache__ are excluded: they cannot change a verdict."""
+    root = Path(root)
+    return _hash_files(root, [r for r in _files_under(root, "evals", EVALS_SUFFIXES)
+                              if Path(r).name.upper() != "README.MD"])
+
+
+def app_prompt_hash(root) -> str:
+    """The chat templates plus the app code the model suites load: what the model sees."""
+    root = Path(root)
+    rels = _files_under(root, "apps/api/app/prompts")
+    rels += [f for f in APP_PROMPT_FILES if (root / f).is_file()]
+    return _hash_files(root, rels)
+
+
+@dataclass
+class Committed:
+    cases: dict[str, list[CaseResult]] | None  # None unless the evidence is fresh
+    problems: list[str]
+    note: str = ""
+    repeat: int | None = None
+
+
+def _case(d) -> CaseResult | None:
+    if not isinstance(d, dict) or not isinstance(d.get("key"), str):
+        return None
+    vals = [d.get(f) for f in ("attempts", "passes", "errors", "failures")]
+    if not all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in vals):
+        return None
+    return CaseResult(d["key"], *vals)
+
+
+def _usable(v) -> bool:
+    return isinstance(v, str) and bool(v) and not v.startswith("unavailable")
+
+
+def load_committed(path, current: dict[str, str]) -> Committed:
+    """Read committed model evidence and decide if it is fresh for the tree whose
+    fingerprint is `current`. Any problem means not fresh: no cases are returned, so
+    the model rows cannot be scored as run. Every problem is reported, not just the first."""
+    def fail(problems):
+        return Committed(None, [f"{p}; {REMEDY}" for p in problems])
+
+    path = Path(path)
+    try:
+        text = path.read_text()
+    except FileNotFoundError:
+        return fail([f"MISSING: {MODEL_LATEST_REL} not found (looked at {path})"])
+    except OSError as e:
+        return fail([f"MISSING: {path} unreadable ({type(e).__name__})"])
+    try:
+        data = json.loads(text)
+    except ValueError as e:
+        return fail([f"MALFORMED: {path} is not valid JSON ({e})"])
+    if (not isinstance(data, dict) or not isinstance(data.get("header"), dict)
+            or not isinstance(data.get("rows"), list)):
+        return fail([f"MALFORMED: {path} has no header object and rows list"])
+    head, problems = data["header"], []
+
+    absent = [f for f in (*FINGERPRINT_FIELDS, "repeat") if f not in head]
+    if absent:
+        problems.append(f"STALE: committed header lacks {', '.join(absent)}")
+    for f in FINGERPRINT_FIELDS:
+        if f not in head:
+            continue
+        was, now = head[f], current.get(f)
+        if not _usable(was):
+            problems.append(f"STALE: committed {f} is unusable ({was!r})")
+        elif not _usable(now):
+            problems.append(f"STALE: {f} cannot be computed now ({now!r})")
+        elif was != now:
+            problems.append(f"STALE: {f} changed (committed {was!r}, now {now!r})")
+    repeat = None
+    if "repeat" in head:
+        try:
+            repeat = int(str(head["repeat"]))
+        except ValueError:
+            problems.append(f"MALFORMED: committed repeat {head['repeat']!r} is not an integer")
+        else:
+            if repeat < MIN_COMMITTED_REPEAT:
+                problems.append(f"STALE: committed at repeat {repeat}, a release needs "
+                                f"repeat >= {MIN_COMMITTED_REPEAT}")
+
+    by_key: dict[str, dict] = {}
+    for r in data["rows"]:
+        if not isinstance(r, dict) or not isinstance(r.get("key"), str):
+            problems.append("MALFORMED: a committed row has no key")
+            continue
+        if r["key"] in by_key:
+            problems.append(f"MALFORMED: committed row {r['key']} appears twice")
+        by_key[r["key"]] = r
+    cases: dict[str, list[CaseResult]] = {}
+    for k in MODEL_ROWS:
+        r = by_key.get(k)
+        if r is None:
+            problems.append(f"MISSING: committed evidence has no {k} row")
+            continue
+        if r.get("verdict") != "PASS" or r.get("ran") is not True:
+            problems.append(f"NOT PASS: committed {k} verdict is {r.get('verdict')!r}"
+                            f" (ran={r.get('ran')!r})")
+        raw = r.get("cases")
+        parsed = [_case(c) for c in raw] if isinstance(raw, list) else [None]
+        if any(c is None for c in parsed):
+            problems.append(f"MALFORMED: committed {k} cases are not a list of case results")
+            continue
+        keys = [c.key for c in parsed]  # type: ignore[union-attr]
+        if len(set(keys)) != len(keys):
+            # a copied case could pad the count up to the config's and hide a lost one
+            problems.append(f"MALFORMED: committed {k} has duplicate case keys")
+            continue
+        cases[k] = parsed  # type: ignore[assignment]
+    if problems:
+        return fail(problems)
+
+    note = (f"measured locally {head.get('date', 'unknown date')} at "
+            f"{head.get('commit', 'unknown commit')}, repeat {repeat}, fingerprint match")
+    if str(head.get("dirty")).lower() == "true":
+        note += " (dirty tree at measurement)"
+    return Committed(cases, [], note, repeat)
+
+
+def model_evidence(card: Scorecard, buckets) -> dict:
+    """What a live run commits: the header (fingerprint included) and the model rows with
+    their per-case results, so committed mode can rescore them, not just trust a label."""
+    rows = []
+    for r in card.rows:
+        if r.key not in MODEL_ROWS:
+            continue
+        cases = [c for c in buckets.get(r.key, []) if isinstance(c, CaseResult)]
+        rows.append({
+            "key": r.key, "verdict": r.verdict, "ran": r.ran, "runs": r.runs,
+            "attempts": r.attempts, "passed": r.passed, "total": r.total,
+            "failures": r.failures, "changed": r.changed,
+            "cases": [{"key": c.key, "attempts": c.attempts, "passes": c.passes,
+                       "errors": c.errors, "failures": c.failures} for c in cases],
+        })
+    return {"schema": 1, "event": card.event, "verdict": card.verdict,
+            "header": dict(card.meta), "rows": rows}
 
 
 # -------------------------------------------------------------------- main
@@ -514,7 +723,14 @@ def main(argv=None) -> int:
     ap.add_argument("--event", default=None)
     ap.add_argument("--meta", action="append", default=[], metavar="K=V")
     ap.add_argument("--out", default=None, help="directory for scorecard.md / scorecard.json")
+    ap.add_argument("--committed", default=None, metavar="PATH",
+                    help="score the model rows from committed evidence (no Promptfoo)")
+    ap.add_argument("--write-model-evidence", default=None, metavar="PATH",
+                    help="also write the model rows and fingerprint here (live runs)")
     args = ap.parse_args(argv)
+    if args.committed and (args.promptfoo or args.repeat is not None):
+        ap.error("--committed takes the model results and repeat from the committed file;"
+                 " do not pass --promptfoo or --repeat with it")
 
     missing_sources: list[str] = []
 
@@ -540,11 +756,32 @@ def main(argv=None) -> int:
             )
     if args.promptfoo and args.repeat is None:
         ap.error("--repeat N is required when --promptfoo is given")
+    repeat = args.repeat
+    model_cats = [spec.partition("=")[0] for spec in args.promptfoo]
+    row_failures: dict[str, list[str]] = {}
+    row_notes: dict[str, str] = {}
+    meta = dict(m.partition("=")[::2] for m in args.meta)
+    if args.committed:
+        com = load_committed(args.committed, current_fingerprint())
+        if com.cases is None:
+            # Not fresh: no cases go in, so each model half is NOT RUN, and the reason
+            # rides on the row. Never a pass.
+            row_failures = {k: list(com.problems) for k in MODEL_ROWS}
+            meta["model_evidence"] = "REJECTED: " + " | ".join(com.problems)
+        else:
+            for k, cases in com.cases.items():
+                buckets.setdefault(k, []).extend(cases)
+            repeat = com.repeat
+            # Expected case counts come from the configs in this tree, as in a live run
+            # (known_residuals is derived from the direct-injection config below).
+            model_cats = [k for k in PROMPTFOO_SOURCES if k != "known_residuals"]
+            row_notes = {k: com.note for k in MODEL_ROWS}
+            meta["model_evidence"] = com.note
+            meta["repeat"] = str(com.repeat)
     flags = {k: False for k in args.not_run}
     expected: dict[str, int] = {}
     root = Path(args.config_root)
-    for spec in args.promptfoo:
-        cat = spec.partition("=")[0]
+    for cat in model_cats:
         try:
             src = cat if cat != "known_residuals" else "direct_injection"
             plain, resid = config_case_counts(root / PROMPTFOO_SOURCES[src])
@@ -560,13 +797,17 @@ def main(argv=None) -> int:
         expected[k] = v
         if v == 0:
             flags[k] = False
-    meta = dict(m.partition("=")[::2] for m in args.meta)
     if missing_sources:
         meta["unreadable_sources"] = "; ".join(missing_sources)
     sc = score(CATEGORIES, buckets, flags, args.event or detect_event(), meta,
-               repeat=args.repeat, expected_cases=expected)
+               repeat=repeat, expected_cases=expected, row_failures=row_failures,
+               row_notes=row_notes, fork_optional=not args.committed)
     if missing_sources:
         sc.verdict = "FAIL"  # an unreadable source is never a pass
+    if args.write_model_evidence:
+        dest = Path(args.write_model_evidence)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(json.dumps(model_evidence(sc, buckets), indent=2) + "\n")
 
     md = render_md(sc)
     if args.out:
@@ -629,6 +870,22 @@ def _app_header() -> dict[str, str]:
         return {"chat_model": f"unavailable ({type(e).__name__})", "template_ref": "unavailable"}
 
 
+def current_fingerprint() -> dict[str, str]:
+    """What a model measurement depends on, computed from the working tree now. The
+    same fields are recorded by every run and compared by committed mode."""
+    try:
+        hashes = {"evals_hash": evals_hash(REPO), "app_prompt_hash": app_prompt_hash(REPO)}
+    except OSError as e:  # unreadable tree: report it, it can never match
+        bad = f"unavailable ({type(e).__name__})"
+        hashes = {"evals_hash": bad, "app_prompt_hash": bad}
+    return {
+        **_app_header(),
+        "grader_model": grader_model(REPO, [cfg for _, cfg in PROMPTFOO_RUNS]),
+        "promptfoo_version": PROMPTFOO_VERSION,
+        **hashes,
+    }
+
+
 def _active_chat_version() -> int | None:
     sys.path.insert(0, str(REPO / "apps" / "api"))
     try:
@@ -655,15 +912,32 @@ def _hygiene_junit(path: Path, outcomes: dict[str, str]) -> None:
 
 def run_main(argv) -> int:
     ap = argparse.ArgumentParser(prog="scorecard.py run")
-    ap.add_argument("--repeat", type=int, required=True)
+    ap.add_argument("--model-source", choices=["live", "committed"], default="live",
+                    help="live: run Promptfoo (paid). committed: no model calls; check "
+                         f"the committed evidence ({MODEL_LATEST_REL}) is fresh")
+    ap.add_argument("--model-evidence", default=None, metavar="PATH",
+                    help="live: also write the model rows + fingerprint here. committed: "
+                         f"read them from here (default {MODEL_LATEST_REL})")
+    ap.add_argument("--repeat", type=int, default=None,
+                    help="live only: N runs per Promptfoo case")
     ap.add_argument("--out", required=True)
     ap.add_argument("--event", choices=["local", "push", "pull_request", "fork_pr"],
                     default=os.environ.get("SCORECARD_EVENT") or None)
     args = ap.parse_args(argv)
+    committed = args.model_source == "committed"
+    if committed and args.repeat is not None:
+        ap.error("--repeat is for live runs; committed mode uses the committed evidence's repeat")
+    if not committed and args.repeat is None:
+        ap.error("--repeat is required with --model-source live")
     event = args.event or detect_event()  # empty means: ask GitHub's env, else local
     # Read the tree state first: the previous scorecard in --out may be tracked
     # (evidence/week9), and deleting it below would make a clean tree look dirty.
     commit, dirty = _git_commit(), git_dirty()
+    # Fingerprint what is about to be measured, before any suite runs.
+    fingerprint = current_fingerprint()
+    evidence = Path(args.model_evidence or (REPO / MODEL_LATEST_REL)).resolve()
+    if not committed and args.model_evidence:
+        evidence.unlink(missing_ok=True)  # never leave an older run's evidence behind
 
     out = Path(args.out).resolve()
     raw = out / "raw"
@@ -724,7 +998,13 @@ def run_main(argv) -> int:
     # Promptfoo model suites. No key: do not run them and say why. Omitting --promptfoo
     # (rather than --not-run) leaves each row's deterministic half to be scored normally;
     # on a required event the empty model half then FAILs the row.
-    if os.environ.get("ANTHROPIC_API_KEY") and event != "fork_pr":
+    if committed:
+        # CI: never call a model. The model halves come from the committed evidence,
+        # scored only if it is fresh for this tree (main --committed).
+        notes.append("model suites not run here: model rows scored from committed "
+                     "evidence, fingerprint-checked")
+        score_argv += ["--committed", str(evidence)]
+    elif os.environ.get("ANTHROPIC_API_KEY") and event != "fork_pr":
         for cat, cfg in PROMPTFOO_RUNS:
             rep = raw / f"promptfoo-{cat}.json"
             code, text = _sh(["npx", f"promptfoo@{PROMPTFOO_VERSION}", "eval", "-c", cfg,
@@ -744,15 +1024,19 @@ def run_main(argv) -> int:
         "date": datetime.now(UTC).strftime("%Y-%m-%d"),
         "commit": commit,
         "dirty": str(dirty).lower(),
-        **_app_header(),
-        "grader_model": grader_model(REPO, [cfg for _, cfg in PROMPTFOO_RUNS]),
-        "promptfoo_version": PROMPTFOO_VERSION,
-        "repeat": str(args.repeat),
+        "model_source": args.model_source,
+        **fingerprint,
     }
+    if not committed:
+        meta["repeat"] = str(args.repeat)
     if notes:
         meta["notes"] = "; ".join(notes)
     for k, v in meta.items():
         score_argv += ["--meta", f"{k}={v}"]
+    if committed:
+        return main(score_argv + ["--event", event, "--out", str(out)])
+    if args.model_evidence:
+        score_argv += ["--write-model-evidence", str(evidence)]
     return main(score_argv + ["--repeat", str(args.repeat), "--event", event,
                               "--out", str(out)])
 
