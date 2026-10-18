@@ -92,9 +92,10 @@ redteam-week8:
 	mkdir -p evidence/week8
 	set -a; . ./.env; set +a; cd apps/api && . .venv/bin/activate && python -u ../../evidence/week8/redteam_week8.py 2>&1 | tee ../../evidence/week8/redteam-run.txt
 
-# Lint the API (ruff, line length 100). Exit 0 when clean; CI runs the same check.
+# Lint the API, scripts/ and tests/ (ruff, line length 100; root ruff.toml extends the
+# API config). Exit 0 when clean; CI runs the same check.
 lint:
-	$(PYTHON) -m ruff check apps/api
+	$(PYTHON) -m ruff check apps/api scripts tests
 
 # Dependency/vuln scan, the same gate CI runs: fails on any fixable HIGH/CRITICAL.
 # Image pinned to trivy 0.76.0 (newest stable; brief said 0.69.0). Override the report path with TRIVY_OUT=<file>.

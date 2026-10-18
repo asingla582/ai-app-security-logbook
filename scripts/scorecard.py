@@ -16,7 +16,7 @@ import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -235,7 +235,8 @@ def _row(cat, items, ran_flag, event, repeat, expected, paths, missing, pins=Fal
         if t.outcome == "passed":
             continue
         if watch and t.outcome == "failed":
-            changed.append(label)  # a completed test whose pinned behavior moved: report, do not gate
+            # a completed test whose pinned behavior moved: report, do not gate
+            changed.append(label)
         else:
             hard.append(label)  # failed, errored or skipped; error and skipped mean not run
     hard += [f"MISSING: {m} contributed no executed result" for m in missing]
@@ -354,7 +355,9 @@ def config_case_counts(config_path) -> tuple[int, int]:
         cases = _load_tests(cfg.get("tests"), path.parent)
     except (OSError, AttributeError, yaml.YAMLError) as e:
         raise ValueError(f"cannot load promptfoo config {path}: {e}") from e
-    resid = sum(str(c.get("description", "")).startswith(RESIDUAL_DESCRIPTION_PREFIX) for c in cases)
+    resid = sum(
+        str(c.get("description", "")).startswith(RESIDUAL_DESCRIPTION_PREFIX) for c in cases
+    )
     return len(cases) - resid, resid
 
 
@@ -487,7 +490,9 @@ def detect_event(env=None) -> str:
 def _expected_arg(value: str):
     cat, _, n = value.partition("=")
     if not cat or not n.isdigit():
-        raise argparse.ArgumentTypeError(f"expected CATEGORY=COUNT with an integer count, got {value!r}")
+        raise argparse.ArgumentTypeError(
+            f"expected CATEGORY=COUNT with an integer count, got {value!r}"
+        )
     return cat, int(n)
 
 
@@ -530,7 +535,9 @@ def main(argv=None) -> int:
         cat, _, path = spec.partition("=")
         buckets.setdefault(cat, []).extend(load(parse_promptfoo, path, cat))
         if cat == "direct_injection":  # the residual cases live in the same run
-            buckets.setdefault("known_residuals", []).extend(load(parse_promptfoo, path, "known_residuals"))
+            buckets.setdefault("known_residuals", []).extend(
+                load(parse_promptfoo, path, "known_residuals")
+            )
     if args.promptfoo and args.repeat is None:
         ap.error("--repeat N is required when --promptfoo is given")
     flags = {k: False for k in args.not_run}
@@ -539,11 +546,13 @@ def main(argv=None) -> int:
     for spec in args.promptfoo:
         cat = spec.partition("=")[0]
         try:
-            plain, resid = config_case_counts(root / PROMPTFOO_SOURCES[cat if cat != "known_residuals" else "direct_injection"])
+            src = cat if cat != "known_residuals" else "direct_injection"
+            plain, resid = config_case_counts(root / PROMPTFOO_SOURCES[src])
         except (ValueError, KeyError) as e:
             missing_sources.append(f"config for {cat} ({e})")
             plain = resid = 0
-        for key, n in ((cat, plain),) + ((("known_residuals", resid),) if cat == "direct_injection" else ()):
+        pairs = [(cat, plain)] + ([("known_residuals", resid)] if cat == "direct_injection" else [])
+        for key, n in pairs:
             if n == 0:
                 flags[key] = False  # no expected cases means we cannot tell if it ran
             expected[key] = n
@@ -732,7 +741,7 @@ def run_main(argv) -> int:
                      + ("" if event == "fork_pr" else " (required on this event, so FAIL)"))
 
     meta = {
-        "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "date": datetime.now(UTC).strftime("%Y-%m-%d"),
         "commit": commit,
         "dirty": str(dirty).lower(),
         **_app_header(),

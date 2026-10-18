@@ -31,7 +31,8 @@ CATEGORIES: list[Category] = [
     Category("indirect_injection", "Indirect injection", "model", MODEL, True),
     Category("tool_injection", "Tool injection", "model", MODEL, True),
     Category("known_residuals", "Known residuals", "watch", "behavior unchanged (pinned)", True),
-    Category("platform_hygiene", "Platform hygiene (ruff, Trivy, grants)", "deterministic", "0 findings", True),
+    Category("platform_hygiene", "Platform hygiene (ruff, Trivy, grants)", "deterministic",
+             "0 findings", True),
     Category("other_deterministic", "Other deterministic", "deterministic", DET, True),
 ]
 

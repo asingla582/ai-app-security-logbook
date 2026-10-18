@@ -72,12 +72,14 @@ def test_junit_maps_by_classname_when_file_is_absent():
     b = sc.categorize(res)
     assert len(b["approval_gate"]) == 3
     assert len(b["structural"]) == 1
-    assert [r.name for r in b["known_residuals"]] == ["test_residual_obfuscated_email_slips_through"]
+    names = [r.name for r in b["known_residuals"]]
+    assert names == ["test_residual_obfuscated_email_slips_through"]
 
 
 def test_skipped_required_tests_fail_the_category():
     b = full_buckets()
-    b["approval_gate"] = sc.categorize(sc.parse_junit(FIX / "junit_gate_skipped.xml"))["approval_gate"]
+    skipped = sc.categorize(sc.parse_junit(FIX / "junit_gate_skipped.xml"))
+    b["approval_gate"] = skipped["approval_gate"]
     card = run(b)
     r = row(card, "approval_gate")
     assert r.ran is False
@@ -239,7 +241,8 @@ def test_md_marks_not_run_visibly():
 
 def test_main_exit_codes(tmp_path):
     jx = tmp_path / "j.xml"
-    jx.write_text('<testsuites><testsuite><testcase classname="tests.test_prompting" name="t"/></testsuite></testsuites>')
+    jx.write_text('<testsuites><testsuite><testcase classname="tests.test_prompting" name="t"/>'
+                  "</testsuite></testsuites>")
     out = tmp_path / "out"
     # Only one category ran: everything else is not run, so the exit is non-zero.
     assert sc.main(["--junit", str(jx), "--event", "push", "--out", str(out)]) == 1
@@ -251,10 +254,12 @@ def test_detect_event(tmp_path):
     assert sc.detect_event({}) == "local"
     assert sc.detect_event({"GITHUB_EVENT_NAME": "push"}) == "push"
     ev = tmp_path / "e.json"
-    ev.write_text(json.dumps({"pull_request": {"head": {"repo": {"full_name": "x/r"}}, "base": {"repo": {"full_name": "o/r"}}}}))
+    ev.write_text(json.dumps({"pull_request": {"head": {"repo": {"full_name": "x/r"}},
+                                               "base": {"repo": {"full_name": "o/r"}}}}))
     env = {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_EVENT_PATH": str(ev)}
     assert sc.detect_event(env) == "fork_pr"
-    ev.write_text(json.dumps({"pull_request": {"head": {"repo": {"full_name": "o/r"}}, "base": {"repo": {"full_name": "o/r"}}}}))
+    ev.write_text(json.dumps({"pull_request": {"head": {"repo": {"full_name": "o/r"}},
+                                               "base": {"repo": {"full_name": "o/r"}}}}))
     assert sc.detect_event(env) == "pull_request"
 
 
@@ -265,7 +270,8 @@ def test_detect_event_deleted_fork_is_fork_pr(tmp_path):
     ev.write_text(json.dumps({"pull_request": pr}))
     env = {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_EVENT_PATH": str(ev)}
     assert sc.detect_event(env) == "fork_pr"
-    ev.write_text(json.dumps({"pull_request": {"head": {}, "base": {"repo": {"full_name": "o/r"}}}}))
+    pr["head"] = {}
+    ev.write_text(json.dumps({"pull_request": pr}))
     assert sc.detect_event(env) == "fork_pr"
 
 
@@ -289,7 +295,9 @@ def test_c1_fork_pr_deterministic_failures_in_model_row_still_fail():
     b = full_buckets()
     for k in MODEL_KEYS + ["known_residuals"]:
         del b[k]
-    b["indirect_injection"] = [T("apps/api/tests/test_provenance.py", f"t{i}", "failed") for i in range(11)]
+    b["indirect_injection"] = [
+        T("apps/api/tests/test_provenance.py", f"t{i}", "failed") for i in range(11)
+    ]
     card = run(b, event="fork_pr")
     assert card.verdict == "FAIL"
     assert row(card, "indirect_injection").verdict == "FAIL"
@@ -324,13 +332,16 @@ def test_c2_real_baseline_is_green_and_missing_vitest_fails():
         b[k] = [i for i in items if not (isinstance(i, sc.TestResult) and i.file in web)]
     card = run(b, file_map=FILE_MAP, overrides=NAME_OVERRIDES)
     assert card.verdict == "FAIL"
-    assert any("MISSING: apps/web/src/lib/actions.test.ts" in f for r in card.rows for f in r.failures)
+    assert any("MISSING: apps/web/src/lib/actions.test.ts" in f
+               for r in card.rows for f in r.failures)
     assert "MISSING: apps/web/src/lib/actions.test.ts" in sc.render_md(card)
 
 
 def test_c2_dropping_a_files_results_fails_its_row():
     b = real_buckets()
-    b["approval_gate"] = [i for i in b["approval_gate"] if i.file != "apps/api/tests/test_approval_gate.py"]
+    b["approval_gate"] = [
+        i for i in b["approval_gate"] if i.file != "apps/api/tests/test_approval_gate.py"
+    ]
     card = run(b, file_map=FILE_MAP, overrides=NAME_OVERRIDES)
     assert card.verdict == "FAIL"
     assert row(card, "approval_gate").verdict == "FAIL"
@@ -365,7 +376,8 @@ def test_c2_unreadable_source_fails_main(tmp_path):
 
 def test_c2_main_without_vitest_is_not_green(tmp_path):
     jx = tmp_path / "j.xml"
-    cases = "".join(f'<testcase classname="x" file="{p}" name="t"/>' for p, _ in FILE_MAP.items() if not p.startswith("apps/web/"))
+    cases = "".join(f'<testcase classname="x" file="{p}" name="t"/>'
+                    for p, _ in FILE_MAP.items() if not p.startswith("apps/web/"))
     jx.write_text(f"<testsuites><testsuite>{cases}</testsuite></testsuites>")
     assert sc.main(["--junit", str(jx), "--event", "fork_pr"]) == 1
 
@@ -400,11 +412,13 @@ def test_i4_all_error_residual_case_is_not_run_and_fails():
 
 def test_i5_residual_override_is_scoped_to_its_file():
     res = [
-        T("tests/scorecard/test_scorecard.py", "test_residual_prefix_routes_out_of_direct_injection", "failed"),
+        T("tests/scorecard/test_scorecard.py",
+          "test_residual_prefix_routes_out_of_direct_injection", "failed"),
         T("apps/api/tests/test_redaction.py", "test_residual_a"),
     ]
     b = sc.categorize(res)
-    assert [r.name for r in b["other_deterministic"]] == ["test_residual_prefix_routes_out_of_direct_injection"]
+    names = [r.name for r in b["other_deterministic"]]
+    assert names == ["test_residual_prefix_routes_out_of_direct_injection"]
     assert [r.name for r in b["known_residuals"]] == ["test_residual_a"]
 
 
@@ -415,7 +429,8 @@ def test_minor_sources_in_md_and_json_and_junit_prefers_file_attr(tmp_path):
     assert "evals/promptfooconfig.yaml" in direct["sources"]
     assert "| Sources |" in sc.render_md(card)
     jx = tmp_path / "j.xml"
-    jx.write_text('<testsuites><testcase classname="tests.test_other" file="apps/api/tests/test_actions.py" name="t"/></testsuites>')
+    jx.write_text('<testsuites><testcase classname="tests.test_other" '
+                  'file="apps/api/tests/test_actions.py" name="t"/></testsuites>')
     assert sc.parse_junit(jx)[0].file == "apps/api/tests/test_actions.py"
 
 
@@ -427,7 +442,8 @@ PIN = ("apps/api/tests/test_redaction.py", "test_residual_a")
 def test_r2_missing_residual_pins_fail_on_push_and_fork():
     b = real_buckets()
     b["known_residuals"] = [i for i in b["known_residuals"] if isinstance(i, sc.CaseResult)]
-    b["output_handling"].append(T("apps/api/tests/test_redaction.py", "test_other"))  # file still "seen"
+    # file still "seen"
+    b["output_handling"].append(T("apps/api/tests/test_redaction.py", "test_other"))
     for ev in ("push", "fork_pr"):
         card = run(b, event=ev, file_map=FILE_MAP, overrides=NAME_OVERRIDES)
         assert card.verdict == "FAIL", ev
@@ -444,8 +460,12 @@ def _write_cfg(root, n_plain=2, n_resid=1):
     ev = root / "evals"
     ev.mkdir()
     (ev / "c.yaml").write_text("tests:\n  - file://a.yaml\n  - file://r.yaml\n")
-    (ev / "a.yaml").write_text("".join(f"- description: plain {i}\n  vars: {{a: {i}}}\n" for i in range(n_plain)))
-    (ev / "r.yaml").write_text("".join(f"- description: KNOWN RESIDUAL r{i}\n" for i in range(n_resid)))
+    (ev / "a.yaml").write_text(
+        "".join(f"- description: plain {i}\n  vars: {{a: {i}}}\n" for i in range(n_plain))
+    )
+    (ev / "r.yaml").write_text(
+        "".join(f"- description: KNOWN RESIDUAL r{i}\n" for i in range(n_resid))
+    )
     return ev / "c.yaml"
 
 
@@ -461,9 +481,11 @@ def test_r2_real_configs_counts():
 
 
 def _report(path, n_cases, repeat=3, resid=0):
-    items = [{"testCase": {"description": f"plain {i}"}, "vars": {"a": i}, "success": True, "error": None}
+    items = [{"testCase": {"description": f"plain {i}"}, "vars": {"a": i},
+              "success": True, "error": None}
              for i in range(n_cases) for _ in range(repeat)]
-    items += [{"testCase": {"description": f"KNOWN RESIDUAL r{i}"}, "vars": {}, "success": True, "error": None}
+    items += [{"testCase": {"description": f"KNOWN RESIDUAL r{i}"}, "vars": {},
+               "success": True, "error": None}
               for i in range(resid) for _ in range(repeat)]
     path.write_text(json.dumps({"results": {"results": items}}))
 
@@ -476,14 +498,15 @@ def test_r2_truncated_report_fails_without_expected_cases_flag(tmp_path, monkeyp
     _report(short, 1, resid=1)
     def verdict(report):
         out = tmp_path / ("o" + report.stem)
-        sc.main(["--promptfoo", f"direct_injection={report}", "--repeat", "3", "--config-root", str(tmp_path),
-                 "--event", "push", "--out", str(out)])
+        sc.main(["--promptfoo", f"direct_injection={report}", "--repeat", "3",
+                 "--config-root", str(tmp_path), "--event", "push", "--out", str(out)])
         rows = {r["key"]: r for r in json.loads((out / "scorecard.json").read_text())["rows"]}
         return rows["direct_injection"], rows["known_residuals"]
     # config path in PROMPTFOO_SOURCES is evals/promptfooconfig.yaml
     (tmp_path / "evals" / "promptfooconfig.yaml").write_text(cfg.read_text())
     d, r = verdict(full)
-    assert d["verdict"] == "PASS" and not any("PARTIAL" in f for f in r["failures"])  # r lacks pytest pins here
+    # r lacks pytest pins here
+    assert d["verdict"] == "PASS" and not any("PARTIAL" in f for f in r["failures"])
     d, r = verdict(short)
     assert d["verdict"] == "FAIL" and any("PARTIAL RUN" in f for f in d["failures"])
 
@@ -495,7 +518,8 @@ def test_r2_unloadable_or_empty_config_is_not_run_and_fails(tmp_path):
     assert sc.main(["--promptfoo", f"direct_injection={rep}", "--repeat", "3",
                     "--config-root", str(tmp_path), "--event", "push", "--out", str(out)]) == 1
     rows = {r["key"]: r for r in json.loads((out / "scorecard.json").read_text())["rows"]}
-    assert rows["direct_injection"]["ran"] is False and rows["direct_injection"]["verdict"] == "FAIL"
+    direct = rows["direct_injection"]
+    assert direct["ran"] is False and direct["verdict"] == "FAIL"
 
 
 def test_r2_malformed_expected_cases_is_a_clean_argparse_error(tmp_path):
@@ -507,7 +531,8 @@ def test_r2_malformed_expected_cases_is_a_clean_argparse_error(tmp_path):
 
 def test_r2_errored_residual_pin_is_hard_fail_not_changed():
     b = full_buckets()
-    b["known_residuals"] = [C("KNOWN RESIDUAL x|{}", 3, 3), T("apps/api/tests/test_redaction.py", "test_residual_a", "error")]
+    b["known_residuals"] = [C("KNOWN RESIDUAL x|{}", 3, 3),
+                            T("apps/api/tests/test_redaction.py", "test_residual_a", "error")]
     card = run(b)
     assert row(card, "known_residuals").verdict == "FAIL" and card.verdict == "FAIL"
     b["known_residuals"][1] = T("apps/api/tests/test_redaction.py", "test_residual_a", "failed")
@@ -564,7 +589,8 @@ def test_assertion_failures_are_failures_not_errors(tmp_path):
     assert r.verdict == "FAIL" and r.ran is True
     md = sc.render_md(card)
     assert "failed assertion" in md and "errored" not in md
-    assert next(x for x in sc.render_json(card)["rows"] if x["key"] == "indirect_injection")["ran"] is True
+    js_row = next(x for x in sc.render_json(card)["rows"] if x["key"] == "indirect_injection")
+    assert js_row["ran"] is True
 
 
 def test_all_assertion_failures_still_ran(tmp_path):
@@ -635,7 +661,8 @@ def test_prompt_pin_check_flags_a_stale_pinned_version(tmp_path):
 
 
 def test_prompt_pin_check_accepts_active_functions_and_rejects_unknown(tmp_path):
-    ok = [_pf_config(tmp_path, f"{f}.yaml", f) for f in ("chat_active", "chat_v4_rag", "chat_v5_rag")]
+    fns = ("chat_active", "chat_v4_rag", "chat_v5_rag")
+    ok = [_pf_config(tmp_path, f"{f}.yaml", f) for f in fns]
     assert sc.prompt_pin_problems(tmp_path, 9, ok) == []
     odd = _pf_config(tmp_path, "odd.yaml", "my_prompt")
     assert sc.prompt_pin_problems(tmp_path, 9, [odd])
@@ -664,14 +691,16 @@ def test_grader_model_read_from_configs(tmp_path):
 
 
 def test_grader_model_on_the_real_configs():
-    assert sc.grader_model(sc.REPO, [c for _, c in sc.PROMPTFOO_RUNS]) == "claude-haiku-4-5-20251001"
+    configs = [c for _, c in sc.PROMPTFOO_RUNS]
+    assert sc.grader_model(sc.REPO, configs) == "claude-haiku-4-5-20251001"
 
 
 def test_every_test_file_is_in_file_map():
     """FILE_MAP is what the MISSING rule checks: a test file left out of it could stop
     running and no row would notice."""
     root = sc.REPO
-    found = {str(p.relative_to(root)) for d in sc.PYTEST_DIRS for p in (root / d).rglob("test_*.py")}
+    found = {str(p.relative_to(root))
+             for d in sc.PYTEST_DIRS for p in (root / d).rglob("test_*.py")}
     found |= {str(p.relative_to(root)) for pat in ("*.test.ts", "*.test.tsx")
               for p in (root / "apps" / "web" / "src").rglob(pat)}
     assert found and found - set(FILE_MAP) == set()
