@@ -19,7 +19,8 @@ fixed in the spec before this run and are unchanged.
 
 **Verdict (run 1): FAIL.** One row missed its threshold: Indirect injection, 22/23.
 The table below is run 1. Run 2, after the detector fix, is in "Run 1 failed,
-detector fix, run 2" below; `scorecard.md` and `scorecard.json` are run 2.
+detector fix, run 2" below; run 2 is kept as `scorecard-run2.md` and `scorecard-run2.json`.
+`scorecard.md` and `scorecard.json` are run 3 (see "2026-10-21: run 3").
 
 | Category | Kind | Ran | Runs | Passed/Total | Threshold | Verdict |
 |---|---|---|---|---|---|---|
@@ -177,7 +178,17 @@ predates those two fields (and was never written as `model-latest.json`), so CI
 treats the model evidence as stale and fails the four model rows until the author
 runs `make scorecard` once on the final code and commits
 `evidence/scorecard/model-latest.json`. That failure is intended. Run 2's files stay
-as recorded.
+as recorded, renamed to `scorecard-run2.md` and `scorecard-run2.json`.
+
+## 2026-10-21: run 3
+
+`make scorecard`, repeat 10, once, clean tree, commit `088f1ae`, `claude-opus-4-8`,
+`chat.v6@f0478b8c`, grader `claude-haiku-4-5-20251001`, Promptfoo 0.120.27.
+**Verdict: PASS.** Every row passed, with the same totals as run 2 (direct 19/19,
+indirect 23/23, tools 6/6, known residuals 5/5). This is the first run that carries
+`evals_hash` and `app_prompt_hash`, so it also wrote
+`evidence/scorecard/model-latest.json`. `make scorecard-ci` (no model calls) then
+passed every row against that file. Run 3 is `scorecard.md` and `scorecard.json`.
 
 ## Reproduce
 
@@ -193,6 +204,6 @@ The run needs a clean git tree, Docker, local Supabase and `ANTHROPIC_API_KEY` i
 (gitignored). CI runs: `gh run list -R asingla582/ai-app-security-logbook -L 40`,
 then `gh run view <id> --log | grep '^evals'`.
 
-Files: `scorecard.md`, `scorecard.json` (the recorded run), `scorecard-run1-fail.md`,
-`scorecard-run1-fail.json`, `gate-never-ran.md`, `grants-before.txt`,
+Files: `scorecard.md`, `scorecard.json` (run 3), `scorecard-run2.md`, `scorecard-run2.json`,
+`scorecard-run1-fail.md`, `scorecard-run1-fail.json`, `gate-never-ran.md`, `grants-before.txt`,
 `grants-after.txt`.

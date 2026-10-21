@@ -142,10 +142,11 @@ an old `model-latest.json` and CI would pass it. A `model-latest.json` diff must
 reviewed like code. Fork PRs get the same full check, since no secret is
 involved; there is no partial verdict in this mode.
 
-**Expected state right now.** No `model-latest.json` has been committed yet. Run 2's
-file (`evidence/week9/scorecard.json`) predates `evals_hash` and `app_prompt_hash`,
-so it could not pass the check anyway. Until the author runs `make scorecard` once on
-the final code and commits the result, the four model rows FAIL in CI. That is
+**Current state.** `evidence/scorecard/model-latest.json` is run 3 (2026-10-21,
+commit `088f1ae`, repeat 10, every row PASS). Run 2's file
+(`evidence/week9/scorecard-run2.json`) predates `evals_hash` and `app_prompt_hash`,
+so it could not pass the check. Any change to the hashed files makes the four model
+rows FAIL in CI until `make scorecard` is re-run and the result committed. That is
 intended: a measurement that does not match the code should not look green.
 
 What this does not catch: a change on the model provider's side (same model id,

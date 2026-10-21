@@ -74,8 +74,10 @@ every call is audited. Built as a public, week-by-week security engineering proj
   fixed before the first run; a row that did not run fails. Recorded run 2 (repeat 10,
   `claude-opus-4-8`, `chat.v6@f0478b8c`, commit `662db3a`): PASS on every row. Run 1
   (commit `7f560a0`) failed Indirect injection at 22/23 because of a detector false
-  positive (RR-W9-3) and is kept as recorded. Evidence: `evidence/week9/scorecard.md`,
-  `scorecard-run1-fail.md`, `README.md`. Reproduce: `make scorecard`. Six model-row
+  positive (RR-W9-3) and is kept as recorded. Run 3 (2026-10-21, commit `088f1ae`, same
+  settings) passed every row again and is the committed model evidence CI checks.
+  Evidence: `evidence/week9/scorecard.md` (run 3), `scorecard-run2.md`,
+  `scorecard-run1-fail.md`, `README.md`, `evidence/scorecard/model-latest.json`. Reproduce: `make scorecard`. Six model-row
   cases are judged by an LLM grader, not by code (listed in `evals/README.md`).
 - **Direct prompt injection:** 20-case corpus (19 cases plus the pinned RR-W3-1
   canary), run through the app's gateway. Scorecard row 19/19 in every one of 10 runs on

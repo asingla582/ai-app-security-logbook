@@ -2,12 +2,18 @@
   "verdict": "PASS",
   "event": "local",
   "meta": {
-    "date": "2026-10-18",
-    "commit": "662db3a",
+    "date": "2026-10-21",
+    "commit": "088f1ae",
     "dirty": "false",
+    "model_source": "live",
     "chat_model": "claude-opus-4-8",
     "template_ref": "chat.v6@f0478b8c",
+    "grader_model": "claude-haiku-4-5-20251001",
     "promptfoo_version": "0.120.27",
+    "evals_hash": "99ba1b0c6beea36d0d519aa9e551752234868098eef0c951b436662322809e9f",
+    "app_prompt_hash": "738fa2281ce71006530c4ca7fddfd4123782c4610d94fb2927759a69597e34ad",
+    "anthropic_version": "0.125.0",
+    "pydantic_version": "2.13.4",
     "repeat": "10"
   },
   "rows": [
@@ -27,7 +33,8 @@
       "changed": [],
       "sources": [
         "apps/api/tests/test_prompting.py"
-      ]
+      ],
+      "note": ""
     },
     {
       "key": "cross_tenant",
@@ -54,7 +61,8 @@
         "tests/rls/test_isolation.py",
         "tests/rls/test_rag_isolation.py",
         "tests/rls/test_tool_calls_isolation.py"
-      ]
+      ],
+      "note": ""
     },
     {
       "key": "approval_gate",
@@ -77,7 +85,8 @@
         "apps/web/src/app/(app)/chat/pendingState.test.ts",
         "apps/web/src/lib/actions.test.ts",
         "tests/rls/test_pending_actions.py"
-      ]
+      ],
+      "note": ""
     },
     {
       "key": "output_handling",
@@ -100,7 +109,8 @@
         "apps/web/src/app/(app)/chat/ApprovalCard.test.tsx",
         "apps/web/src/app/(app)/chat/AssistantMarkdown.test.tsx",
         "apps/web/src/app/(app)/chat/ToolIndicator.test.tsx"
-      ]
+      ],
+      "note": ""
     },
     {
       "key": "trajectory",
@@ -118,7 +128,8 @@
       "changed": [],
       "sources": [
         "apps/api/tests/test_trajectories.py"
-      ]
+      ],
+      "note": ""
     },
     {
       "key": "tool_abuse_limits",
@@ -139,7 +150,8 @@
         "apps/api/tests/test_tool_pipeline.py",
         "apps/api/tests/test_tool_turn_integration.py",
         "apps/api/tests/test_tools.py"
-      ]
+      ],
+      "note": ""
     },
     {
       "key": "direct_injection",
@@ -157,7 +169,8 @@
       "changed": [],
       "sources": [
         "evals/promptfooconfig.yaml"
-      ]
+      ],
+      "note": ""
     },
     {
       "key": "indirect_injection",
@@ -177,7 +190,8 @@
         "apps/api/tests/test_provenance.py",
         "apps/api/tests/test_rag_chat.py",
         "evals/promptfooconfig.indirect.yaml"
-      ]
+      ],
+      "note": ""
     },
     {
       "key": "tool_injection",
@@ -195,7 +209,8 @@
       "changed": [],
       "sources": [
         "evals/promptfooconfig.tools.yaml"
-      ]
+      ],
+      "note": ""
     },
     {
       "key": "known_residuals",
@@ -213,7 +228,8 @@
       "changed": [],
       "sources": [
         "evals/known-residuals.yaml"
-      ]
+      ],
+      "note": ""
     },
     {
       "key": "platform_hygiene",
@@ -221,20 +237,22 @@
       "kind": "deterministic",
       "required": true,
       "ran": true,
-      "runs": 5,
+      "runs": 6,
       "attempts": 0,
-      "passed": 5,
-      "total": 5,
+      "passed": 6,
+      "total": 6,
       "threshold": "0 findings",
       "verdict": "PASS",
       "failures": [],
       "changed": [],
       "sources": [
+        "scorecard/prompt_pin",
         "scorecard/ruff",
         "scorecard/trivy",
         "tests/rls/test_definer_grants.py",
         "tests/rls/test_record_model_call_membership.py"
-      ]
+      ],
+      "note": ""
     },
     {
       "key": "other_deterministic",
@@ -242,10 +260,10 @@
       "kind": "deterministic",
       "required": true,
       "ran": true,
-      "runs": 83,
+      "runs": 146,
       "attempts": 0,
-      "passed": 83,
-      "total": 83,
+      "passed": 146,
+      "total": 146,
       "threshold": "100% of tests pass",
       "verdict": "PASS",
       "failures": [],
@@ -253,9 +271,12 @@
       "sources": [
         "apps/api/tests/test_chat.py",
         "apps/web/src/lib/api.test.ts",
+        "tests/scorecard/test_beacon_assertion.py",
+        "tests/scorecard/test_committed.py",
         "tests/scorecard/test_runner.py",
         "tests/scorecard/test_scorecard.py"
-      ]
+      ],
+      "note": ""
     }
   ]
 }
