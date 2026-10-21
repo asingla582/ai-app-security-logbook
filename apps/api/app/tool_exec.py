@@ -2,7 +2,8 @@
 reply out. The model proposes; the app disposes — rate limit, validate, authorize,
 execute as the caller under a timeout, then answer from a fresh assembly with the
 result as RETRIEVED context (single-step: the second call carries no tools).
-Week 8: an approval-required tool is parked as a pending action instead of executed; see approvals.py for the approve path.
+Week 8: an approval-required tool is parked as a pending action instead of
+executed; see approvals.py for the approve path.
 """
 
 import json
@@ -90,7 +91,9 @@ def create_note_exec(ctx, args) -> ToolResult:
     return ToolResult(content=summary, summary=summary, chunks=[chunk], ref=str(note[0]))
 
 
-def _park_for_approval(conn, correlation_id, org_id, conversation_id, proposal_id, spec, args, chunks):
+def _park_for_approval(
+    conn, correlation_id, org_id, conversation_id, proposal_id, spec, args, chunks
+):
     """Week 8: an approval-required tool is never executed in the proposal turn.
     The exact args are stored with a database-computed hash; the requester approves
     them in a separate request. Returns the payload the approval card renders."""

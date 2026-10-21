@@ -1,6 +1,6 @@
 # System Card: AI App Security Logbook
 
-**Version:** 1.4 · **Date:** 2026-10-07 · **Milestone:** v0.8
+**Version:** 1.5 · **Date:** 2026-10-18 · **Milestone:** v0.8, measured in Week 9
 A one-page account of what this AI system is, what data it touches, what backs its
 safety claims, and what remains at risk. Refreshed each milestone alongside the
 [threat model](threat-model.md).
@@ -12,7 +12,8 @@ every call is audited. Built as a public, week-by-week security engineering proj
 ## Model
 - **Provider / model:** Anthropic, `claude-opus-4-8` (configurable via `CHAT_MODEL`).
 - **Access:** server-side only, through a single gateway (`apps/api/app/gateway.py`).
-  The browser never holds the model key. Tests and CI use a deterministic fake.
+  The browser never holds the model key. The test suites use a deterministic fake;
+  the scorecard's model rows call the real model.
 - **Sampling:** provider default (this model rejects a `temperature` parameter).
   Outputs are therefore non-deterministic; safety is measured as a rate over repeated
   runs, never asserted from a single run.
@@ -59,17 +60,39 @@ every call is audited. Built as a public, week-by-week security engineering proj
   in the request's retrieved context; the web client re-refuses images and raw HTML.
 - Data protection: PII/secret redaction at the audit boundary, on input, output, and
   tool-call records.
-- Supply chain / CI: lint, tests, RLS suite, Gitleaks, Trivy, and injection eval gates
-  (direct, indirect, and tool-invocation) that double as model-drift detection.
+- Supply chain / CI: Gitleaks and Trivy in CI. Since Week 9 one scorecard job runs
+  ruff, pytest (API, RLS), vitest, Trivy and the three injection suites (direct,
+  indirect, tool-invocation) and fails if any required row did not run. The model
+  rows double as model-drift detection. Before Week 9 the CI eval job skipped in every
+  run that had it (RR-W9-1), and v0.8 was released on a red build (RR-W9-2); both are fixed.
+- Database grants (Week 9): no SECURITY DEFINER function is executable by `anon`
+  (migration 0012), checked across the whole catalog by `tests/rls/test_definer_grants.py`;
+  `record_model_call` requires membership of the org it records for.
 
 ## Safety evaluations
-- **Direct prompt injection:** 20-case corpus, run through the app's gateway, gated in CI.
-  20/20 on `chat v6`. Evidence: `evals/`, `evidence/week8/eval-run-direct-v6.txt`.
+- **Scorecard (Week 9):** every suite below scored into twelve rows with thresholds
+  fixed before the first run; a row that did not run fails. Recorded run 2 (repeat 10,
+  `claude-opus-4-8`, `chat.v6@f0478b8c`, commit `662db3a`): PASS on every row. Run 1
+  (commit `7f560a0`) failed Indirect injection at 22/23 because of a detector false
+  positive (RR-W9-3) and is kept as recorded. Run 3 (2026-10-21, commit `088f1ae`, same
+  settings) passed every row again and is the committed model evidence CI checks.
+  Evidence: `evidence/week9/scorecard.md` (run 3), `scorecard-run2.md`,
+  `scorecard-run1-fail.md`, `README.md`, `evidence/scorecard/model-latest.json`. Reproduce: `make scorecard`. Six model-row
+  cases are judged by an LLM grader, not by code (listed in `evals/README.md`).
+- **Direct prompt injection:** 20-case corpus (19 cases plus the pinned RR-W3-1
+  canary), run through the app's gateway. Scorecard row 19/19 in every one of 10 runs on
+  `chat v6`. Week 8 single run: 20/20, `evidence/week8/eval-run-direct-v6.txt`.
 - **Indirect injection (RAG):** 12-case corpus of poisoned documents through the real
-  assembly. 12/12 on `chat v6`. Evidence: `evidence/week8/eval-run-indirect-v6.txt`.
+  assembly, plus the provenance and RAG-assembly tests. Scorecard row 23/23 in run 2.
+  Week 8 single run: 12/12, `evidence/week8/eval-run-indirect-v6.txt`.
 - **Tool-invocation injection:** 6-case corpus measuring whether a document can steer the
-  model into proposing an action. 6/6 on `chat v6`. Evidence: `make eval-tools`,
-  `evidence/week8/eval-run-tools-v6.txt`.
+  model into proposing an action. Scorecard row 6/6 in every one of 10 runs. Week 8
+  single run: 6/6, `evidence/week8/eval-run-tools-v6.txt`.
+- **Trajectory (Week 9):** 7 tests read `tool_calls` and `pending_actions` from the
+  database and assert the ordered sequence for read, approved, denied, expired,
+  injected-`org_id` and wrong-hash flows, plus a sweep for executed writes without an
+  executed approval. The model is the deterministic fake. Evidence:
+  `apps/api/tests/test_trajectories.py`, scorecard row 7/7.
 - **Tool-calling red team:** full pipeline: injected writes produced no note; DoW ceiling
   engages; cross-tenant/tampering blocked. Evidence: `evidence/week7/`.
 - **Approval gate red team:** 12/12 held, 0 broke: parameter mutation, approval forgery,
@@ -99,11 +122,20 @@ every call is audited. Built as a public, week-by-week security engineering proj
   the full body.
 - A requester can write a forged completion record for their own action (RR-W8-3):
   audit integrity only, no privilege gain.
-- Definer functions from earlier migrations still executable by `anon` (RR-W8-4,
-  **open**, found in the week 8 final review): `record_model_call` also skips a
-  membership check, so anyone with the public anon key who knows an org UUID can write
-  audit rows and use up that org's daily model-call budget. Owned by follow-up
-  migration 0012.
+- Definer functions from earlier migrations executable by `anon` (RR-W8-4): **closed
+  in Week 9** by migration 0012 (revoke from `public` and `anon`, membership check in
+  `record_model_call`) and a catalog-wide test. Side effect: an `anon` RLS read on six
+  tables now errors (42501) instead of returning nothing; this fails closed and the app
+  never reads as `anon`.
+- `record_model_call` does not check that the conversation belongs to the org it
+  records for (RR-W9-4, open, low): a user in two orgs could file an audit row under
+  the wrong org. Audit accuracy only.
+- The CI scorecard gate needs the author's `ANTHROPIC_API_KEY` repository secret.
+  Without it the job fails on push and same-repo PRs, by design; fork PRs get a stated
+  partial pass with the model rows not run.
+- Eval detectors can be wrong: RR-W9-3 was the fifth time a detector here scored a
+  mention instead of the artifact. The scorecard reports what each detector says;
+  transcripts are still read by hand.
 - An approved action can stay `approved` if the database fails between the claim and
   completion: a stated limit. It fails closed (nothing runs twice), and no sweep for
   such rows exists yet.

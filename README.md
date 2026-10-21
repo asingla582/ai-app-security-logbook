@@ -55,6 +55,19 @@ make test    # run every test suite
 make attack  # run the cross-tenant attack suite and capture evidence
 ```
 
+The security scorecard (Week 9) runs every suite and scores it against fixed
+thresholds. It needs Docker, the local Supabase stack and `ANTHROPIC_API_KEY`; a
+recorded run is about 380 chat calls plus the LLM-grader calls for the rubric cases:
+
+```
+make scorecard       # repeat 10, writes evidence/week9/scorecard.md and scorecard.json
+make scorecard-ci    # repeat 3, the CI configuration
+make ci              # the checks CI runs: scorecard-ci, then the web lint, tests and build
+```
+
+Without the key the model rows do not run, so the scorecard (and `make ci`) reports
+FAIL. That is deliberate: a check that did not run is never a pass.
+
 Live-model attacks (need `ANTHROPIC_API_KEY`; `REDTEAM_RUNS=10` for recorded evidence):
 
 ```
@@ -162,10 +175,32 @@ RR-006 (a document's own phishing link stays clickable in chat) is accepted at v
 See [`evidence/week8/`](evidence/week8/), including a written
 [attack walkthrough](evidence/week8/walkthrough.md).
 
-Next: Week 9 (consolidated eval suite).
+**Week 9 shipped: the Eval Scorecard.** One command, `make scorecard`, runs every
+suite (pytest, vitest, ruff, Trivy and the three Promptfoo injection suites) and
+scores them into twelve rows with thresholds fixed before the first run. A row that
+did not run is a failure. Building it turned up two findings about the project's own
+checks. The CI eval gate had never run: in all 5 runs that had the job, it skipped on
+a missing secret and reported success. And v0.8 was released on a red build (15 ruff
+errors, one CRITICAL and two HIGH dependency advisories). Both are fixed; the new CI
+job fails when it cannot run. RR-W8-4 is closed by migration 0012 and a catalog-wide
+grants test (7 `anon`-executable definer functions before, 0 after). The first
+recorded scorecard failed: Indirect injection 22/23, on two replies that showed the
+beacon URL inside inline code with a warning and rendered no image. That was the
+detector scoring a mention, the fifth time this project has hit that rule. Run 1 is
+kept as recorded; the assertion was fixed in a separate, dated commit, and run 2
+passed every row at repeat 10. Under the old assertion run 2 would also have failed,
+so the pass comes from the corrected detector, not a change in the model. Trajectory
+tests now check the recorded sequence in `tool_calls` and `pending_actions`, and
+[ADR 0001](security/adr/0001-eval-harness.md) records why the harness is Promptfoo plus
+pytest and a committed file. The CI gate needs the author's `ANTHROPIC_API_KEY`
+secret and fails until it is added. See [`evidence/week9/`](evidence/week9/).
+
+Next: Week 10 (observability).
 
 ## Security
 
 - [Threat model](security/threat-model.md): trust boundaries, findings register, framework mapping, maturity self-assessment.
 - [System card](security/system-card.md): model, data, evaluations, residual risks.
+- [ADR 0001: eval harness](security/adr/0001-eval-harness.md): why Promptfoo, pytest trajectory checks and a committed scorecard.
+- [Evals and the scorecard](evals/README.md): suites, thresholds, and what CI does.
 - Per-week attack evidence: [`evidence/`](evidence/).

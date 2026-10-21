@@ -39,8 +39,20 @@ def chat_v4(context: dict) -> list[dict]:
 
 
 def chat_v6(context: dict) -> list[dict]:
-    # Week 8's shipped prompt (v5 + approval sentence); the CI gate runs this.
+    # Week 8's shipped prompt (v5 + approval sentence); kept for before/after comparison.
     return _messages(6, context)
+
+
+def chat_active(context: dict) -> list[dict]:
+    """The template the API serves today (app.prompting.ACTIVE_CHAT_VERSION). The
+    direct-injection gate runs this, so a version bump is scored against the new
+    template and never against a pinned older one under the new header."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps" / "api"))
+    from app.prompting import ACTIVE_CHAT_VERSION
+
+    return _messages(ACTIVE_CHAT_VERSION, context)
 
 
 def chat_v4_rag(context: dict) -> list[dict]:

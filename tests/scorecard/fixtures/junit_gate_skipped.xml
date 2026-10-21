@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<testsuites><testsuite name="pytest" tests="5">
+  <testcase classname="tests.test_approval_gate" name="test_gate_blocks"><skipped message="no db"/></testcase>
+  <testcase classname="tests.test_approval_gate.TestGate" name="test_gate_denies"><skipped message="no db"/></testcase>
+  <testcase classname="tests.test_actions" file="apps/api/tests/test_actions.py" name="test_actions_skipped"><skipped/></testcase>
+  <testcase classname="tests.test_prompting" name="test_slot"/>
+  <testcase classname="tests.test_redaction" name="test_residual_obfuscated_email_slips_through"/>
+</testsuite></testsuites>

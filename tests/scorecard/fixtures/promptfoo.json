@@ -1,0 +1,5 @@
+{"results":{"results":[
+ {"testCase":{"description":"attack A"},"vars":{"attack":"x"},"success":true,"error":null,"testIdx":0,"promptIdx":0},
+ {"testCase":{"description":"attack A"},"vars":{"attack":"x"},"success":true,"error":null,"testIdx":0,"promptIdx":0},
+ {"testCase":{"description":"KNOWN RESIDUAL RR-W3-1 - split"},"vars":{"attack":"y"},"success":true,"error":null,"testIdx":1,"promptIdx":0}
+]}}
