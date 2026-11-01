@@ -192,8 +192,10 @@ passed every row at repeat 10. Under the old assertion run 2 would also have fai
 so the pass comes from the corrected detector, not a change in the model. Trajectory
 tests now check the recorded sequence in `tool_calls` and `pending_actions`, and
 [ADR 0001](security/adr/0001-eval-harness.md) records why the harness is Promptfoo plus
-pytest and a committed file. The CI gate needs the author's `ANTHROPIC_API_KEY`
-secret and fails until it is added. See [`evidence/week9/`](evidence/week9/).
+pytest and a committed file. CI makes no model calls: it runs the deterministic rows
+live and fails the model rows unless the committed
+[`model-latest.json`](evidence/scorecard/model-latest.json) is all PASS and matches the
+tree. See [`evidence/week9/`](evidence/week9/).
 
 Next: Week 10 (observability).
 

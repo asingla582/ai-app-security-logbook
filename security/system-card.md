@@ -130,9 +130,11 @@ every call is audited. Built as a public, week-by-week security engineering proj
 - `record_model_call` does not check that the conversation belongs to the org it
   records for (RR-W9-4, open, low): a user in two orgs could file an audit row under
   the wrong org. Audit accuracy only.
-- The CI scorecard gate needs the author's `ANTHROPIC_API_KEY` repository secret.
-  Without it the job fails on push and same-repo PRs, by design; fork PRs get a stated
-  partial pass with the model rows not run.
+- CI makes no model calls. The scorecard job runs the deterministic rows live and
+  fails the model rows unless the committed `evidence/scorecard/model-latest.json` is
+  all PASS, repeat 10 or more, and fingerprint-matched to the tree. A model regression
+  is found at the next local `make scorecard`, not on the push that caused it, and the
+  evidence file is self-attested (RR-W9-6).
 - Eval detectors can be wrong: RR-W9-3 was the fifth time a detector here scored a
   mention instead of the artifact. The scorecard reports what each detector says;
   transcripts are still read by hand.
