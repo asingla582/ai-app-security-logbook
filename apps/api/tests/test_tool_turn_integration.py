@@ -7,8 +7,6 @@ caller's org, the trajectory is recorded); the pure-unit test proves single-step
 
 import os
 
-import psycopg
-
 from app.gateway import FakeGateway, Reply, ToolProposal, get_gateway
 from app.main import app
 

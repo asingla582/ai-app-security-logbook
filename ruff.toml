@@ -1,0 +1,2 @@
+# Root ruff config for scripts/ and tests/ (make lint). Same rules as the API.
+extend = "apps/api/ruff.toml"

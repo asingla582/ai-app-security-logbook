@@ -58,7 +58,8 @@ def _pending(c, org_id, args=None, flags=None):
     tc = _tool_call(c, org_id)
     args = args or {"title": "T", "body": "B"}
     row = c.execute(
-        "select * from create_pending_action('cid', %s, null, %s, 'create_note', %s::jsonb, %s::jsonb)",
+        "select * from create_pending_action("
+        "'cid', %s, null, %s, 'create_note', %s::jsonb, %s::jsonb)",
         (org_id, tc, json.dumps(args), json.dumps(flags or {})),
     ).fetchone()
     c.commit()
@@ -98,7 +99,8 @@ def test_owner_can_read_own_row_other_user_cannot(member):
     with UserConn(user_id) as c:
         assert c.execute("select id from pending_actions where id = %s", (p["id"],)).fetchall()
     with UserConn(other_id) as c:
-        assert c.execute("select id from pending_actions where id = %s", (p["id"],)).fetchall() == []
+        rows = c.execute("select id from pending_actions where id = %s", (p["id"],)).fetchall()
+        assert rows == []
 
 
 def test_authenticated_cannot_insert_update_or_delete(member):
@@ -110,7 +112,10 @@ def test_authenticated_cannot_insert_update_or_delete(member):
          "tool_name, args, args_sha256, status, expires_at) values (%s, 'x', %s, %s, "
          "'create_note', '{}'::jsonb, 'h', 'approved', now())",
          (p["tool_call_id"], user_id, org_id)),
-        ("update pending_actions set args = '{\"title\":\"evil\"}'::jsonb where id = %s", (p["id"],)),
+        (
+            "update pending_actions set args = '{\"title\":\"evil\"}'::jsonb where id = %s",
+            (p["id"],),
+        ),
         ("delete from pending_actions where id = %s", (p["id"],)),
     ):
         with UserConn(user_id) as c:
@@ -156,7 +161,9 @@ def test_claim_outcomes(member):
         c.commit()
     assert _status(p["id"]) == "pending"
     with UserConn(user_id) as c:
-        row = c.execute("select * from claim_pending_action(%s, %s)", (p["id"], p["hash"])).fetchone()
+        row = c.execute(
+            "select * from claim_pending_action(%s, %s)", (p["id"], p["hash"])
+        ).fetchone()
         c.commit()
     assert row[0] == "claimed" and row[1] == "create_note" and row[2] == {"title": "T", "body": "B"}
     assert _status(p["id"]) == "approved"
@@ -210,7 +217,8 @@ def test_expired_claim_marks_row_and_trajectory_expired(member):
         c.commit()
     assert _status(action_id) == "expired"
     with psycopg.connect(DB_URL) as conn:
-        assert conn.execute("select status from tool_calls where id = %s", (tc,)).fetchone()[0] == "expired"
+        status = conn.execute("select status from tool_calls where id = %s", (tc,)).fetchone()[0]
+        assert status == "expired"
 
 
 def test_concurrent_claims_have_exactly_one_winner(member):
@@ -249,7 +257,8 @@ def test_deny_and_expire_my(member):
         c.commit()
     assert _status(p["id"]) == "denied"
     with UserConn(user_id) as c:
-        assert c.execute("select deny_pending_action(%s)", (p["id"],)).fetchone()[0] == "already_decided"
+        res = c.execute("select deny_pending_action(%s)", (p["id"],)).fetchone()[0]
+        assert res == "already_decided"
 
 
 def test_conversation_delete_nulls_terminal_row(member):
@@ -265,7 +274,8 @@ def test_conversation_delete_nulls_terminal_row(member):
             (org_id, conv_id),
         ).fetchone()[0]
         row = c.execute(
-            "select * from create_pending_action('cid', %s, %s, %s, 'create_note', '{}'::jsonb, '{}'::jsonb)",
+            "select * from create_pending_action("
+            "'cid', %s, %s, %s, 'create_note', '{}'::jsonb, '{}'::jsonb)",
             (org_id, conv_id, tc),
         ).fetchone()
         c.execute("select deny_pending_action(%s)", (row[0],))

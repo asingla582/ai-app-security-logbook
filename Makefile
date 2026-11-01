@@ -1,4 +1,9 @@
-.PHONY: up down setup test attack seed eval eval-baseline eval-indirect eval-tools redteam-week6 redteam-week7 theater-week8 theater-week8-v2 redteam-week8
+.PHONY: scorecard scorecard-ci ci lint trivy up down setup test attack seed eval eval-baseline eval-indirect eval-tools redteam-week6 redteam-week7 theater-week8 theater-week8-v2 redteam-week8
+
+# Python for the scorecard targets. CI passes PYTHON=python.
+PYTHON ?= apps/api/.venv/bin/python
+SCORECARD_EVENT ?=
+SCORECARD_OUT ?= .scorecard
 
 # Prepare a fresh clone: start Supabase, fill .env with its local keys, and build
 # the API virtualenv. Idempotent, safe to re-run. Needs Docker, Node (npx), Python 3.
@@ -24,7 +29,7 @@ seed:
 
 # Runs both suites the CI gate runs: the API tests and the database-layer RLS tests.
 test:
-	set -a; . ./.env; set +a; . apps/api/.venv/bin/activate; python -m pytest -q apps/api/tests tests/rls
+	set -a; . ./.env; set +a; . apps/api/.venv/bin/activate; python -m pytest -q apps/api/tests tests/rls tests/scorecard
 	cd apps/web && npm test
 
 # Reproduce the Week 1 cross-tenant attack run and capture the evidence.
@@ -86,3 +91,33 @@ theater-week8-v2:
 redteam-week8:
 	mkdir -p evidence/week8
 	set -a; . ./.env; set +a; cd apps/api && . .venv/bin/activate && python -u ../../evidence/week8/redteam_week8.py 2>&1 | tee ../../evidence/week8/redteam-run.txt
+
+# Lint the API, scripts/ and tests/ (ruff, line length 100; root ruff.toml extends the
+# API config). Exit 0 when clean; CI runs the same check.
+lint:
+	$(PYTHON) -m ruff check apps/api scripts tests
+
+# Dependency/vuln scan, the same gate CI runs: fails on any fixable HIGH/CRITICAL.
+# Image pinned to trivy 0.76.0 (newest stable; brief said 0.69.0). Override the report path with TRIVY_OUT=<file>.
+TRIVY_OUT ?= .trivy.json
+trivy:
+	docker run --rm -v "$$PWD":/src aquasec/trivy:0.76.0 fs --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 --format json -o /src/$(TRIVY_OUT) /src
+
+# Local, per release, PAID: runs every suite including the model suites at repeat 10.
+# Writes evidence/week9/scorecard.md|json and evidence/scorecard/model-latest.json (the
+# model rows plus the fingerprint). Commit model-latest.json: CI checks it is fresh.
+# The event comes from SCORECARD_EVENT (local, push, pull_request, fork_pr); empty means detect from GitHub's env, else local.
+scorecard:
+	mkdir -p evidence/week9 evidence/scorecard
+	if [ -f .env ]; then set -a; . ./.env; set +a; fi; $(PYTHON) scripts/scorecard.py run --repeat 10 --out evidence/week9 --model-evidence evidence/scorecard/model-latest.json $(if $(SCORECARD_EVENT),--event $(SCORECARD_EVENT))
+
+# CI: no model calls and no key. Runs the deterministic suites live and scores the model
+# rows from evidence/scorecard/model-latest.json, which FAILs unless it is complete, all
+# PASS, repeat >= 10, and its fingerprint matches this tree. Output to $(SCORECARD_OUT) (gitignored).
+scorecard-ci:
+	mkdir -p $(SCORECARD_OUT)
+	if [ -f .env ]; then set -a; . ./.env; set +a; fi; $(PYTHON) scripts/scorecard.py run --model-source committed --out $(SCORECARD_OUT) $(if $(SCORECARD_EVENT),--event $(SCORECARD_EVENT))
+
+# The full CI gate: scorecard, then the web checks.
+ci: scorecard-ci
+	cd apps/web && npm run lint && npm test && npm run build
