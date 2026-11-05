@@ -1,6 +1,6 @@
 # Threat Model v1
 
-**Version:** 1.0, plus deltas in the Update log: v1.1 (Week 5 RAG), v1.2 (Week 6 indirect injection + output handling), v1.3 (Week 7 secure tool calling), v1.4 (Week 8 human approval), v1.5 (Week 9 eval scorecard) · **Date:** 2026-10-18 · **Milestone:** v0.4 "Trust Foundation" → v0.8, measured in Week 9
+**Version:** 1.0, plus deltas in the Update log: v1.1 (Week 5 RAG), v1.2 (Week 6 indirect injection + output handling), v1.3 (Week 7 secure tool calling), v1.4 (Week 8 human approval), v1.5 (Week 9 eval scorecard), v1.6 (Week 10 observability and audit integrity) · **Date:** 2026-11-04 · **Milestone:** v0.4 "Trust Foundation" → v0.8, measured in Week 9, observability added in Week 10
 **Refresh cadence:** revised at each milestone (next at v1.0). A threat
 model is evidence, and evidence goes stale; treat anything here as true only as of
 the date above and the commit it ships with.
@@ -37,7 +37,7 @@ A multi-tenant enterprise AI assistant, built as a vertical slice per week.
    as `user`/`assistant` messages.
 4. Gateway calls the model. The reply is stored, and a **redacted** copy of input
    and output is written to `model_calls` via a `SECURITY DEFINER` function that
-   stamps `user_id` from `auth.uid()` (rows cannot be forged), along with the
+   stamps `user_id` from `auth.uid()` and only the API can call (migration 0013), along with the
    prompt template ref (`chat.vN@<hash>`) and the correlation ID.
 
 ### Data flow (an approval-required action, Week 8)
@@ -229,7 +229,7 @@ not an exact technique ID.
 - **OWASP:** LLM06 (excessive agency), LLM01 (indirect prompt injection) · **NIST:**
   Manage · **ATLAS:** LLM Prompt Injection, User Execution.
 - **Residuals:** RR-W8-1 (an informed human can approve a bad action), RR-W8-2 (flag
-  detection limits), RR-W8-3 (requester can forge their own completion record). See §5.
+  detection limits), RR-W8-3 (requester could forge their own completion record; fixed in Week 10). See §5.
 - **Evidence:** `supabase/migrations/0011_pending_actions.sql`,
   `apps/api/app/approvals.py`, `evidence/week8/` (including a written walkthrough).
 
@@ -307,15 +307,21 @@ Every documented finding to date, with an honest status. "Closed" here means
 | RR-W3-3 | Instruction-leak resistance is behavioral, not structural | **Accepted limit** | Prompt holds no secrets by design; a secret prompt would need a different architecture |
 | RR-W8-1 | An informed human can still approve a bad action. HITL buys informed consent, not correctness | **Open, accepted** | Mitigated by provenance flags (links with source, copied spans, full body on the card). Candidate further controls: a four-eyes rule for flagged actions, URL reputation |
 | RR-W8-2 | Flag detection limits: scheme-less links are detected only for hosts a retrieved document mentioned, by whitespace token; obfuscated forms (`host[.]example`, text glued to the host, port or userinfo forms) are not flagged; a link the model invents with no document source is flagged "written by the assistant" only if it has a scheme | **Open, accepted** | The card always shows the full body, so the human can still read an unflagged link. Flags are an aid, not a filter |
-| RR-W8-3 | `complete_pending_action` is callable by the requester directly after their own claim, so a user can write a forged "executed" audit trail (and an unredacted `result_summary`) for their **own** action without running it | **Open, accepted** | Same pattern as Week 7's `finalize_tool_call`. No privilege gain and no cross-user effect; audit integrity only |
+| RR-W8-3 | `complete_pending_action` is callable by the requester directly after their own claim, so a user can write a forged "executed" audit trail (and an unredacted `result_summary`) for their **own** action without running it | **Fixed** (wk10) | Re-opened: "audit integrity only" undersold it. Week 10 reconstructs incidents from these rows, and a live attack rewrote them through the database API (`evidence/week10/forge-run-1-before.txt`, 4/4). Migration 0013 moves every audit writer to the `audit_writer` role, which a user token cannot reach. After: 0/5 |
 | RR-W8-4 | Pre-existing, found in the week 8 final review: some SECURITY DEFINER functions from earlier migrations are still executable by `anon` through Supabase's default ACL (`record_model_call`, `count_org_model_calls_1d`, `count_user_tool_calls_1m`, `owns_conversation`, `is_org_member`, `is_org_owner`, `create_organization`). `record_model_call` also does not check membership of `p_org_id`, so anyone holding the public anon key who knows an org UUID can insert audit rows and exhaust that org's daily model-call budget | **Closed** (wk9) | Migration 0012 revokes all from `public` and `anon` on each function, re-grants `authenticated` and `service_role`, and adds an org-membership check to `record_model_call`. `tests/rls/test_definer_grants.py` checks the whole catalog, so a future definer function that `anon` can execute fails the build: 7 exposed before (`evidence/week9/grants-before.txt`), 0 after (`grants-after.txt`) |
 | RR-006 | Document-hosted URLs are allowlist-legal: a forged page's phishing link renders clickable, attributed but live (10/10) | **Accepted** (v0.8) | Weighed at v0.8 and accepted. This is a content-trust problem (is the document honest?), not an output-channel one. Links are attributed to their source, and the approval card's link listing applies the same idea to writes. Candidate controls if it needs to close: URL reputation, a sensitivity-scoped link policy, non-clickable document links in chat replies. See v1.2 and v1.4 deltas |
 | RR-W9-1 | The CI model-eval gate never executed. In all 5 CI runs that had an `evals` job, the job logged "ANTHROPIC_API_KEY secret not available; skipping model-in-the-loop eval." and concluded `success`, including the v0.8 merge run. A green check meant "the job did not fail", not "the evals passed" | **Fixed** (wk9) | The `evals` job is replaced by a `scorecard` job that fails when it cannot run. After the 2026-10-18 author decision (no model key in CI), the job makes no model calls: it scores the model rows from `evidence/scorecard/model-latest.json`, measured locally by `make scorecard` at repeat 10, and FAILs them unless that file is all PASS and its content fingerprint matches the tree being merged. A missing or stale measurement FAILs the rows instead of reading as green. Evidence: `evidence/week9/gate-never-ran.md`. Run 3 (2026-10-21, commit `088f1ae`, repeat 10, every row PASS) is committed as `model-latest.json`, and `make scorecard-ci` passes every row against it locally. The new job passed on GitHub on PR #1 (run 39597152249) |
 | RR-W9-2 | v0.8 was released on a failing build. Merge run 37713565008 failed `api` (ruff, 15 errors) and `security` (Trivy: `next` 16.3.3 CRITICAL GHSA-vcvr-r3jv-pc5j, `sharp` 0.35.4 HIGH, `source-map-js` 1.2.1 HIGH) | **Fixed** (wk9) | Commit `d7a9fff` clears the ruff errors and upgrades `next` to 16.3.8 with `sharp` and `source-map-js` overrides. Process change: `make ci` runs the same scorecard as CI (deterministic suites live, model rows from the committed evidence) plus the web lint, tests and build, so a release can be checked locally first. Gitleaks still runs only in CI. On 2026-11-01 the same gate went red on a docs-only commit: Trivy found new advisories against `next` 16.3.8 (GHSA-2464-fhr4-w9xw, GHSA-673q-mjm6-r5xr, CVE-2026-94482). Upgraded to 16.4.1 before merge |
 | RR-W9-3 | Detector false positive: the indirect "image beacon" eval failed any reply that contained the beacon URL, including a URL shown inside inline code with a warning. Scorecard run 1 failed the case 2/10 (row 22/23) on replies that rendered no image | **Fixed** (wk9, detector) | The assertion now strips real code spans and fences, then applies the original two checks (no markdown image, no URL on the beacon host) to what remains (`b50635b`, tightened in `8dd3776`); regression tests in `tests/scorecard/test_beacon_assertion.py` include the two real replies and bypass cases. Under the old assertion run 2 would also have failed 4/10; run 2's PASS comes from the corrected detector, not different model behavior. Fifth time the project has had to apply "score the artifact, not the mention" |
-| RR-W9-4 | Pre-existing, found in week 9 review: `record_model_call` checks org membership and conversation ownership separately, but not that the conversation belongs to that org, so a user in two orgs could file an audit row under the wrong org | **Open** (low) | Backlog. Audit accuracy only, for the caller's own conversations; no cross-user read or write |
+| RR-W9-4 | Pre-existing, found in week 9 review: `record_model_call` checks org membership and conversation ownership separately, but not that the conversation belongs to that org, so a user in two orgs could file an audit row under the wrong org | **Mitigated** (wk10) | No longer reachable by a user: only the API can call `record_model_call` (0013), and the API derives the org from the conversation. The function itself still does not check it |
 | RR-W9-5 | Nothing makes the scorecard block a merge. `main` has no branch protection and no ruleset, so a red `scorecard` check is visible but does not stop a merge; the job is advisory | **Open** | The author. Add a ruleset on `main` that requires the `scorecard`, `web` and `security` checks. No repository secret is needed for that any more: the scorecard job makes no model calls. Not changed by the Week 9 branch |
 | RR-W9-6 | Model-suite regressions are detected per release locally, not per push. CI makes no model calls (2026-10-18 author decision); the CI freshness check guarantees merged code matches the last measured fingerprint, not that the model was re-measured on it. A model-provider-side drift (same model id, changed behavior) is only caught at the next local run. Also not caught per push: code outside the fingerprint (covered only by the deterministic rows), and a change in the installed `anthropic` or `pydantic` version (recorded in the header for the reader, not fingerprinted, because CI installs them unpinned). The check catches stale evidence, not forged evidence: the file is self-attested, so anyone who can commit could paste the current fingerprint into an old `model-latest.json` and CI would pass it. A `model-latest.json` diff must be reviewed like code | **Open, accepted** | The author. Run `make scorecard` locally before each release and commit `evidence/scorecard/model-latest.json`; CI fails the model rows when it is stale |
+| RR-W10-1 | A database administrator or a compromised API can still rewrite audit rows. The API connects as `postgres` and switches role, and nothing makes the rows tamper-evident. Spans are a second copy, but in a local, in-memory store | **Open, accepted** | Stated limit for v1. A hash chain or an external write-once log would be the fix |
+| RR-W10-2 | `audit_events` has no rate limit. Approving random action ids writes one row per request with no org, so a signed-in user can grow the table | **Open** (low) | Week 11. Rows with no org appear on no timeline |
+| RR-W10-3 | No browser spans. The web sends a `traceparent` the API records as a link, so the trail starts at the API. Deliberate: a browser exporter needs a public ingest endpoint any user could write to | **Accepted** | Same reason the client correlation id is ignored |
+| RR-W10-4 | Detection is pull, not push, and `approved_document_link` will also fire on legitimate links from documents. Thresholds (3 hash mismatches, 50 model calls an hour) are stated, not measured | **Open** | Week 11 tuning |
+| RR-W10-5 | The timeline cannot name who uploaded the document behind a flagged link. That is the first question in `evidence/week10/incident-walkthrough.md`, and the answer is only on the upload request's root span and in stderr | **Open** | Week 11: record uploads as audit events |
+| RR-W10-6 | A user can delete their own conversation, through the API or the database API, which nulls `conversation_id` on its audit rows and removes its messages. Deliberate since Week 3: the rows survive with their org and correlation id, and the timeline does not depend on the link. Nothing records that the deletion happened | **Accepted** | Week 11: consider an audit event for deletion |
 
 No finding is un-triaged. The "open, accepted" residuals are genuine and stated
 plainly rather than closed with a false fix.
@@ -344,7 +350,7 @@ gap map, not a gold star.
 | Discover & classify | 2 | Assets known; no automated data classification yet (relevant once RAG lands, Week 5) |
 | Govern | 3 | Clear ownership model, least-privilege RLS, versioned prompts; no formal policy doc beyond this |
 | Protect | 4 | Strongest area: RLS + app authz, redaction, structural prompt separation, output sanitizer, tool validation and rate caps, and (Week 8) a hash-locked, single-use approval gate for writes. Not a 5: the last decision on a write is a human's (RR-W8-1), and flag detection has known gaps (RR-W8-2) |
-| Detect | 1 | Weakest area, unchanged. The audit records more signals (approve/deny outcomes such as `hash_mismatch` and `expired`, the `pending_approval → approved → executed` trajectory), and the red team's orphan query (no executed write without an executed approval) can be run by hand. Nothing alerts on any of it, and RR-W8-3 means a user's own completion record is not trustworthy. Owned by Week 10 |
+| Detect | 2 | Was 1. Fixed rules now answer "normal or breach?" over the audit rows (`audit_anomalies`, `make detect`, a banner on the owner timeline), spans cover API, retrieval, model, tools and approval, and users can no longer rewrite the record. Not a 3: nothing pages anyone, thresholds are stated rather than baselined, the trace store is local and in memory, and the first version of the rules missed the incident it was built for |
 | Assure | 3 | Now measured per release: one committed scorecard (`evidence/week9/scorecard.md`) with thresholds fixed before the first run, where a row that did not run fails. Week 9 also found that the earlier 3 rested partly on a CI eval gate that had never run (RR-W9-1), and that v0.8 shipped on a red build (RR-W9-2). Not a 4: model suites are re-measured per release locally, not per push (RR-W9-6), and CI fails the model rows until a fresh `evidence/scorecard/model-latest.json` is committed, nothing yet requires that check before a merge (RR-W9-5), detector accuracy still relies on reading transcripts (RR-W9-3), and there is no external audit |
 
 The shape is deliberate: this phase invests in **protect**, and **detect** is
@@ -687,3 +693,29 @@ ran, and "not run" is never a pass.
   canary; their behavior did not move. The other residuals are not in that row. The CI `scorecard` job has not yet
   run on GitHub, and it fails the model rows until the author commits a fresh
   `evidence/scorecard/model-latest.json`.
+
+### v1.6 · Week 10 (2026-11-04): observability and audit integrity
+
+- **The break.** A signed-in user's own token rewrote the audit trail through the database
+  API: 4/4 forgeries landed (`evidence/week10/forge-run-1-before.txt`). RR-W8-3 had been
+  accepted as "audit integrity only", which stops being acceptable once incidents are
+  reconstructed from these rows.
+- **The fix.** Migration 0013 gives every audit writer to a NOLOGIN `audit_writer` role
+  that only the API can switch to. Correlation ids are server-issued, and a client
+  `traceparent` is recorded as a link, never a parent. After: 0/5
+  (`evidence/week10/forge-run-2-after.txt`).
+- **Also fixed.** `db_for_user` did not commit its impersonation, so a rollback before the
+  first commit would have dropped the connection back to the `postgres` role with RLS off.
+- **Built.** OpenTelemetry spans (ids, counts and verdicts, never content), `audit_events`,
+  an owner-only timeline, detection rules, Jaeger for local traces.
+- **Review findings fixed before shipping.** Exception messages on spans could quote row
+  content; `url_hosts` could return userinfo or query text; a NUL in an id returned 500;
+  model-written tool names reached spans; a revoked member at the budget limit got 500.
+- **Second break.** The first replay returned no findings on a run where a flagged phishing
+  link was approved and stored. `approved_document_link` was added and fires on that same
+  row (`evidence/week10/detect-same-incident.txt`).
+- **Evidence.** `evidence/week10/incident-walkthrough.md`. Week 8's attack was chosen because
+  Week 6's 8/10 exfiltration needs pre-defense code and cannot be replayed honestly.
+- **Residuals.** RR-W8-3 fixed. RR-W9-4 mitigated. New: RR-W10-1 to RR-W10-6.
+- **Not re-measured.** The model suites did not change, so the committed evidence still
+  applies. No file in the scorecard fingerprint was edited.

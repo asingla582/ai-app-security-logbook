@@ -1,6 +1,6 @@
 # System Card: AI App Security Logbook
 
-**Version:** 1.5 · **Date:** 2026-10-18 · **Milestone:** v0.8, measured in Week 9
+**Version:** 1.6 · **Date:** 2026-11-04 · **Milestone:** v0.8, measured in Week 9, observability added in Week 10
 A one-page account of what this AI system is, what data it touches, what backs its
 safety claims, and what remains at risk. Refreshed each milestone alongside the
 [threat model](threat-model.md).
@@ -65,6 +65,11 @@ every call is audited. Built as a public, week-by-week security engineering proj
   indirect, tool-invocation) and fails if any required row did not run. The model
   rows double as model-drift detection. Before Week 9 the CI eval job skipped in every
   run that had it (RR-W9-1), and v0.8 was released on a red build (RR-W9-2); both are fixed.
+- Audit integrity (Week 10): every audit writer is executable only by `audit_writer`,
+  which a user token cannot reach, and a catalog test lists the definer functions a user
+  may call. Correlation ids are server-issued.
+- Observability (Week 10): OpenTelemetry spans carrying ids, counts and verdicts, never
+  content; an org-owner timeline that hides args, titles and URL paths.
 - Database grants (Week 9): no SECURITY DEFINER function is executable by `anon`
   (migration 0012), checked across the whole catalog by `tests/rls/test_definer_grants.py`;
   `record_model_call` requires membership of the org it records for.
@@ -120,8 +125,9 @@ every call is audited. Built as a public, week-by-week security engineering proj
 - Flag detection limits (RR-W8-2): obfuscated or glued link forms are not flagged, and
   scheme-less links only for hosts a retrieved document mentioned. The card always shows
   the full body.
-- A requester can write a forged completion record for their own action (RR-W8-3):
-  audit integrity only, no privilege gain.
+- A requester could write a forged completion record for their own action (RR-W8-3):
+  **closed in Week 10** by migration 0013, which puts every audit writer out of reach of
+  a user token.
 - Definer functions from earlier migrations executable by `anon` (RR-W8-4): **closed
   in Week 9** by migration 0012 (revoke from `public` and `anon`, membership check in
   `record_model_call`) and a catalog-wide test. Side effect: an `anon` RLS read on six
@@ -135,6 +141,9 @@ every call is audited. Built as a public, week-by-week security engineering proj
   all PASS, repeat 10 or more, and fingerprint-matched to the tree. A model regression
   is found at the next local `make scorecard`, not on the push that caused it, and the
   evidence file is self-attested (RR-W9-6).
+- The audit trail is protected from users, not from a database administrator or a
+  compromised API (RR-W10-1). Detection is a command and a timeline banner: nothing pages
+  anyone, and thresholds are stated rather than measured (RR-W10-4).
 - Eval detectors can be wrong: RR-W9-3 was the fifth time a detector here scored a
   mention instead of the artifact. The scorecard reports what each detector says;
   transcripts are still read by hand.

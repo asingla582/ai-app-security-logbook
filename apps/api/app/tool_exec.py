@@ -10,17 +10,19 @@ import json
 from dataclasses import dataclass, field
 
 from fastapi import HTTPException
+from opentelemetry import trace
 from pydantic import ValidationError
 
 from .approval_flags import approval_flags
-from .config import TOOL_TIMEOUT_SECONDS
-from .db import db_for_user
+from .config import CHAT_MODEL, TOOL_TIMEOUT_SECONDS
+from .db import as_audit_writer, db_for_user
 from .gateway import Reply
 from .limits import RateLimited, check_user_tool_rate
 from .prompting import assemble_chat_prompt
 from .provenance import RetrievedChunk
 from .redaction import redact
 from .retrieval import retrieve_chunks
+from .telemetry import current_traceparent, traced
 from .tools import REGISTRY, ToolContext, ToolResult, ToolSpec, anthropic_tools, validate_args
 
 
@@ -98,11 +100,12 @@ def _park_for_approval(
     The exact args are stored with a database-computed hash; the requester approves
     them in a separate request. Returns the payload the approval card renders."""
     flags = approval_flags(args, chunks)
-    row = conn.execute(
-        "select * from create_pending_action(%s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)",
-        (correlation_id, org_id, conversation_id, proposal_id, spec.name,
-         json.dumps(args.model_dump()), json.dumps(flags)),
-    ).fetchone()
+    with as_audit_writer(conn):
+        row = conn.execute(
+            "select * from create_pending_action(%s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s)",
+            (correlation_id, org_id, conversation_id, proposal_id, spec.name,
+             json.dumps(args.model_dump()), json.dumps(flags), current_traceparent()),
+        ).fetchone()
     conn.commit()
     return {
         "id": str(row[0]),
@@ -130,7 +133,8 @@ def _audit_safe(value):
     # replaces it with U+FFFD so a NUL from the model is still recorded (visibly)
     # instead of failing the turn before the trajectory row exists.
     if isinstance(value, str):
-        return value.replace("\x00", "\ufffd")
+        # jsonb also rejects a lone surrogate, which the encode round trip replaces.
+        return value.replace("\x00", "\ufffd").encode("utf-8", "replace").decode("utf-8")
     if isinstance(value, dict):
         return {_audit_safe(k): _audit_safe(v) for k, v in value.items()}
     if isinstance(value, list):
@@ -139,21 +143,26 @@ def _audit_safe(value):
 
 
 def _record_proposal(conn, correlation_id, org_id, conversation_id, name, raw_args, status):
-    row = conn.execute(
-        "select record_tool_proposal(%s, %s, %s, %s, %s::jsonb, %s)",
-        (correlation_id, org_id, conversation_id, name,
-         redact(json.dumps(_audit_safe(raw_args))), status),
-    ).fetchone()
+    with as_audit_writer(conn):
+        row = conn.execute(
+            "select record_tool_proposal(%s, %s, %s, %s, %s::jsonb, %s)",
+            (correlation_id, org_id, conversation_id, name,
+             redact(json.dumps(_audit_safe(raw_args))), status),
+        ).fetchone()
     conn.commit()
     return row[0]
 
 
 def _finalize(conn, proposal_id, status, summary, executed):
-    conn.execute(
-        "select finalize_tool_call(%s, %s, %s, %s)",
-        (proposal_id, status, summary, executed),
-    )
+    with as_audit_writer(conn):
+        conn.execute(
+            "select finalize_tool_call(%s, %s, %s, %s)",
+            (proposal_id, status, summary, executed),
+        )
     conn.commit()
+    # The one place every tool outcome passes through, so its verdict goes on the span.
+    span = trace.get_current_span()
+    span.set_attribute("tool.final_status", status)
 
 
 def _execute_with_timeout(conn, spec, ctx, args) -> ToolResult:
@@ -167,6 +176,26 @@ def _execute_with_timeout(conn, spec, ctx, args) -> ToolResult:
         (str(int(TOOL_TIMEOUT_SECONDS * 1000)),),
     )
     return spec.execute(ctx, args)
+
+
+def _known_tool(name):
+    # The model writes this string, so an unregistered one stays off the span.
+    return name if name in REGISTRY else "unknown"
+
+
+def _model_call(name, call, *args):
+    """A span around one model call: which call and what came back, never its text."""
+    with traced(f"model.{name}") as span:
+        span.set_attribute("gen_ai.request.model", CHAT_MODEL)
+        result = call(*args)
+        span.set_attribute("gen_ai.usage.input_tokens", result.input_tokens)
+        span.set_attribute("gen_ai.usage.output_tokens", result.output_tokens)
+        if isinstance(result, Reply):
+            span.set_attribute("app.model.outcome", "reply")
+        else:
+            span.set_attribute("app.model.outcome", "tool_use")
+            span.set_attribute("gen_ai.tool.name", _known_tool(result.name))
+        return result
 
 
 def run_tool_turn(
@@ -188,7 +217,9 @@ def run_tool_turn(
     The route assembles and passes the first-leg `prompt` (so it owns the error-path
     audit record) plus the `retrieval_chunks` behind it and the `history` needed to
     reassemble the second leg with the tool result appended."""
-    first = gateway.propose(prompt.template.system, prompt.messages, anthropic_tools())
+    first = _model_call(
+        "propose", gateway.propose, prompt.template.system, prompt.messages, anthropic_tools()
+    )
     if isinstance(first, Reply):
         return TurnOutcome(
             reply_text=first.text,
@@ -203,7 +234,9 @@ def run_tool_turn(
     decision = _decide_tool(first)
     result = None
     pending = None
-    with db_for_user(user.id) as conn:
+    with traced("tool.decide") as tool_span, db_for_user(user.id) as conn:
+        tool_span.set_attribute("gen_ai.tool.name", _known_tool(first.name))
+        tool_span.set_attribute("tool.decision", decision.status)
         proposal_id = _record_proposal(
             conn, correlation_id, org_id, conversation_id, first.name,
             first.raw_args, decision.status,
@@ -228,6 +261,8 @@ def run_tool_turn(
                         conn, correlation_id, org_id, conversation_id, proposal_id,
                         decision.spec, decision.args, retrieval_chunks,
                     )
+                    tool_span.set_attribute("app.action_id", pending["id"])
+                    tool_span.set_attribute("app.args_sha256", pending["args_sha256"])
                 except Exception:
                     # e.g. jsonb rejecting the args. Nothing was parked and nothing
                     # runs; close the trajectory and answer plainly, as the failed
@@ -252,7 +287,7 @@ def run_tool_turn(
     if pending is not None:
         final_chunks = list(retrieval_chunks) + [_pending_chunk(pending)]
         prompt2 = assemble_chat_prompt(history, context=final_chunks)
-        reply = gateway.complete(prompt2.template.system, prompt2.messages)
+        reply = _model_call("complete", gateway.complete, prompt2.template.system, prompt2.messages)
         return TurnOutcome(
             reply_text=reply.text,
             tool_used=None,
@@ -266,7 +301,7 @@ def run_tool_turn(
 
     if result is None:
         # invalid or failed proposal: answer plainly from retrieval only.
-        reply = gateway.complete(prompt.template.system, prompt.messages)
+        reply = _model_call("complete", gateway.complete, prompt.template.system, prompt.messages)
         return TurnOutcome(
             reply_text=reply.text,
             tool_used=None,
@@ -279,7 +314,7 @@ def run_tool_turn(
 
     final_chunks = list(retrieval_chunks) + list(result.chunks)
     prompt2 = assemble_chat_prompt(history, context=final_chunks or None)
-    reply = gateway.complete(prompt2.template.system, prompt2.messages)
+    reply = _model_call("complete", gateway.complete, prompt2.template.system, prompt2.messages)
     return TurnOutcome(
         reply_text=reply.text,
         tool_used={"name": decision.spec.name, "summary": result.summary},

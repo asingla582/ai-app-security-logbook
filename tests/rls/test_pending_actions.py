@@ -19,6 +19,8 @@ class UserConn:
     Week 7 gotcha); these tests commit and keep acting as the user, so they need
     the session-scoped form or later calls silently run with auth.uid() = NULL."""
 
+    role = "authenticated"
+
     def __init__(self, user_id: str):
         self.user_id = user_id
 
@@ -26,7 +28,8 @@ class UserConn:
         self.conn = psycopg.connect(DB_URL)
         claims = json.dumps({"role": "authenticated", "sub": self.user_id})
         self.conn.execute("select set_config('request.jwt.claims', %s, false)", (claims,))
-        self.conn.execute("set role authenticated")
+        self.conn.execute(f"set role {self.role}")
+        self.conn.commit()
         return self.conn
 
     def __exit__(self, *exc):
@@ -46,6 +49,40 @@ def _seed_member():
     return user_id, org_id
 
 
+class WriterConn(UserConn):
+    """The API's write path: same claims, as audit_writer (migration 0013). Table
+    reads stay on UserConn, which RLS applies to."""
+
+    role = "audit_writer"
+
+
+_WRITERS = ("record_tool_proposal", "create_pending_action", "claim_pending_action",
+            "complete_pending_action", "deny_pending_action", "expire_my_pending_actions")
+
+
+class _AppConnection:
+    """Acts as the API does: authenticated, switching to audit_writer around a writer."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def execute(self, sql, params=None):
+        if not any(fn in sql for fn in _WRITERS):
+            return self._conn.execute(sql, params)
+        self._conn.execute("set role audit_writer")
+        result = self._conn.execute(sql, params)
+        self._conn.execute("set role authenticated")
+        return result
+
+
+class AppConn(UserConn):
+    def __enter__(self):
+        return _AppConnection(super().__enter__())
+
+
 def _tool_call(c, org_id):
     row = c.execute(
         "select record_tool_proposal('cid', %s, null, 'create_note', '{}'::jsonb, 'proposed')",
@@ -59,7 +96,7 @@ def _pending(c, org_id, args=None, flags=None):
     args = args or {"title": "T", "body": "B"}
     row = c.execute(
         "select * from create_pending_action("
-        "'cid', %s, null, %s, 'create_note', %s::jsonb, %s::jsonb)",
+        "'cid', %s, null, %s, 'create_note', %s::jsonb, %s::jsonb, null)",
         (org_id, tc, json.dumps(args), json.dumps(flags or {})),
     ).fetchone()
     c.commit()
@@ -82,7 +119,7 @@ def _status(action_id):
 
 def test_hash_is_computed_in_sql_from_stored_args(member):
     user_id, org_id = member
-    with UserConn(user_id) as c:
+    with AppConn(user_id) as c:
         p = _pending(c, org_id, {"title": "Hé 🚀", "body": "x"})
     with psycopg.connect(DB_URL) as conn:
         text = conn.execute(
@@ -94,18 +131,18 @@ def test_hash_is_computed_in_sql_from_stored_args(member):
 def test_owner_can_read_own_row_other_user_cannot(member):
     user_id, org_id = member
     other_id, _ = _seed_member()
-    with UserConn(user_id) as c:
+    with AppConn(user_id) as c:
         p = _pending(c, org_id)
-    with UserConn(user_id) as c:
+    with AppConn(user_id) as c:
         assert c.execute("select id from pending_actions where id = %s", (p["id"],)).fetchall()
-    with UserConn(other_id) as c:
+    with AppConn(other_id) as c:
         rows = c.execute("select id from pending_actions where id = %s", (p["id"],)).fetchall()
         assert rows == []
 
 
 def test_authenticated_cannot_insert_update_or_delete(member):
     user_id, org_id = member
-    with UserConn(user_id) as c:
+    with AppConn(user_id) as c:
         p = _pending(c, org_id)
     for sql, params in (
         ("insert into pending_actions (tool_call_id, correlation_id, requester, org_id, "
@@ -118,14 +155,14 @@ def test_authenticated_cannot_insert_update_or_delete(member):
         ),
         ("delete from pending_actions where id = %s", (p["id"],)),
     ):
-        with UserConn(user_id) as c:
+        with AppConn(user_id) as c:
             with pytest.raises(psycopg.errors.InsufficientPrivilege):
                 c.execute(sql, params)
 
 
 def test_trigger_freezes_args_even_for_the_owner_role(member):
     user_id, org_id = member
-    with UserConn(user_id) as c:
+    with AppConn(user_id) as c:
         p = _pending(c, org_id)
     with psycopg.connect(DB_URL) as conn:  # superuser: bypasses grants, not triggers
         with pytest.raises(psycopg.errors.RaiseException):
@@ -137,7 +174,7 @@ def test_trigger_freezes_args_even_for_the_owner_role(member):
 
 def test_trigger_rejects_illegal_transition_and_delete(member):
     user_id, org_id = member
-    with UserConn(user_id) as c:
+    with AppConn(user_id) as c:
         p = _pending(c, org_id)
     with psycopg.connect(DB_URL) as conn:
         with pytest.raises(psycopg.errors.RaiseException):
@@ -150,24 +187,24 @@ def test_trigger_rejects_illegal_transition_and_delete(member):
 def test_claim_outcomes(member):
     user_id, org_id = member
     other_id, _ = _seed_member()
-    with UserConn(user_id) as c:
+    with AppConn(user_id) as c:
         p = _pending(c, org_id)
-    with UserConn(other_id) as c:
+    with AppConn(other_id) as c:
         assert c.execute("select outcome from claim_pending_action(%s, %s)",
                          (p["id"], p["hash"])).fetchone()[0] == "not_found"
-    with UserConn(user_id) as c:
+    with AppConn(user_id) as c:
         assert c.execute("select outcome from claim_pending_action(%s, %s)",
                          (p["id"], "0" * 64)).fetchone()[0] == "hash_mismatch"
         c.commit()
     assert _status(p["id"]) == "pending"
-    with UserConn(user_id) as c:
+    with AppConn(user_id) as c:
         row = c.execute(
             "select * from claim_pending_action(%s, %s)", (p["id"], p["hash"])
         ).fetchone()
         c.commit()
     assert row[0] == "claimed" and row[1] == "create_note" and row[2] == {"title": "T", "body": "B"}
     assert _status(p["id"]) == "approved"
-    with UserConn(user_id) as c:
+    with AppConn(user_id) as c:
         assert c.execute("select outcome from claim_pending_action(%s, %s)",
                          (p["id"], p["hash"])).fetchone()[0] == "already_decided"
 
@@ -175,9 +212,9 @@ def test_claim_outcomes(member):
 def test_claim_with_null_hash_is_a_mismatch(member):
     # NULL-safe comparison: a NULL hash must not claim the row.
     user_id, org_id = member
-    with UserConn(user_id) as c:
+    with AppConn(user_id) as c:
         p = _pending(c, org_id)
-    with UserConn(user_id) as c:
+    with AppConn(user_id) as c:
         assert c.execute("select outcome from claim_pending_action(%s, %s)",
                          (p["id"], None)).fetchone()[0] == "hash_mismatch"
         c.commit()
@@ -186,12 +223,12 @@ def test_claim_with_null_hash_is_a_mismatch(member):
 
 def test_claim_requires_current_membership(member):
     user_id, org_id = member
-    with UserConn(user_id) as c:
+    with AppConn(user_id) as c:
         p = _pending(c, org_id)
     with psycopg.connect(DB_URL) as conn:
         conn.execute("delete from memberships where user_id = %s", (user_id,))
         conn.commit()
-    with UserConn(user_id) as c:
+    with AppConn(user_id) as c:
         assert c.execute("select outcome from claim_pending_action(%s, %s)",
                          (p["id"], p["hash"])).fetchone()[0] == "not_found"
     assert _status(p["id"]) == "pending"
@@ -199,7 +236,7 @@ def test_claim_requires_current_membership(member):
 
 def test_expired_claim_marks_row_and_trajectory_expired(member):
     user_id, org_id = member
-    with UserConn(user_id) as c:
+    with AppConn(user_id) as c:
         tc = _tool_call(c, org_id)
         c.commit()
     action_id = str(uuid.uuid4())
@@ -211,7 +248,7 @@ def test_expired_claim_marks_row_and_trajectory_expired(member):
             (action_id, tc, user_id, org_id),
         )
         conn.commit()
-    with UserConn(user_id) as c:
+    with AppConn(user_id) as c:
         assert c.execute("select outcome from claim_pending_action(%s, 'h')",
                          (action_id,)).fetchone()[0] == "expired"
         c.commit()
@@ -223,12 +260,12 @@ def test_expired_claim_marks_row_and_trajectory_expired(member):
 
 def test_concurrent_claims_have_exactly_one_winner(member):
     user_id, org_id = member
-    with UserConn(user_id) as c:
+    with AppConn(user_id) as c:
         p = _pending(c, org_id)
     barrier, outcomes = threading.Barrier(2), []
 
     def claim():
-        with UserConn(user_id) as c:
+        with AppConn(user_id) as c:
             barrier.wait()
             outcomes.append(c.execute("select outcome from claim_pending_action(%s, %s)",
                                       (p["id"], p["hash"])).fetchone()[0])
@@ -242,7 +279,7 @@ def test_concurrent_claims_have_exactly_one_winner(member):
 
 def test_complete_only_moves_an_approved_row(member):
     user_id, org_id = member
-    with UserConn(user_id) as c:
+    with AppConn(user_id) as c:
         p = _pending(c, org_id)
         c.execute("select complete_pending_action(%s, true, null, 'x')", (p["id"],))
         c.commit()
@@ -251,12 +288,12 @@ def test_complete_only_moves_an_approved_row(member):
 
 def test_deny_and_expire_my(member):
     user_id, org_id = member
-    with UserConn(user_id) as c:
+    with AppConn(user_id) as c:
         p = _pending(c, org_id)
         assert c.execute("select deny_pending_action(%s)", (p["id"],)).fetchone()[0] == "denied"
         c.commit()
     assert _status(p["id"]) == "denied"
-    with UserConn(user_id) as c:
+    with AppConn(user_id) as c:
         res = c.execute("select deny_pending_action(%s)", (p["id"],)).fetchone()[0]
         assert res == "already_decided"
 
@@ -268,14 +305,14 @@ def test_conversation_delete_nulls_terminal_row(member):
         conn.execute("insert into conversations (id, user_id, org_id) values (%s, %s, %s)",
                      (conv_id, user_id, org_id))
         conn.commit()
-    with UserConn(user_id) as c:
+    with AppConn(user_id) as c:
         tc = c.execute(
             "select record_tool_proposal('cid', %s, %s, 'create_note', '{}'::jsonb, 'proposed')",
             (org_id, conv_id),
         ).fetchone()[0]
         row = c.execute(
             "select * from create_pending_action("
-            "'cid', %s, %s, %s, 'create_note', '{}'::jsonb, '{}'::jsonb)",
+            "'cid', %s, %s, %s, 'create_note', '{}'::jsonb, '{}'::jsonb, null)",
             (org_id, conv_id, tc),
         ).fetchone()
         c.execute("select deny_pending_action(%s)", (row[0],))
@@ -288,7 +325,7 @@ def test_conversation_delete_nulls_terminal_row(member):
 
 
 @pytest.mark.parametrize("sig", [
-    "create_pending_action(text, uuid, uuid, uuid, text, jsonb, jsonb)",
+    "create_pending_action(text, uuid, uuid, uuid, text, jsonb, jsonb, text)",
     "claim_pending_action(uuid, text)",
     "complete_pending_action(uuid, boolean, uuid, text)",
     "deny_pending_action(uuid)",
@@ -296,12 +333,13 @@ def test_conversation_delete_nulls_terminal_row(member):
     "record_tool_proposal(text, uuid, uuid, text, jsonb, text)",
     "finalize_tool_call(uuid, text, text, boolean)",
 ])
-def test_definer_functions_executable_by_authenticated_not_anon(sig):
+def test_audit_writers_executable_by_audit_writer_only(sig):
     if not _supabase_reachable():
         pytest.skip("local Supabase stack not reachable")
     with psycopg.connect(DB_URL) as conn:
-        anon, authed = conn.execute(
+        anon, authed, writer = conn.execute(
             "select has_function_privilege('anon', %s, 'execute'), "
-            "has_function_privilege('authenticated', %s, 'execute')", (sig, sig)
+            "has_function_privilege('authenticated', %s, 'execute'), "
+            "has_function_privilege('audit_writer', %s, 'execute')", (sig, sig, sig)
         ).fetchone()
-    assert anon is False and authed is True
+    assert (anon, authed, writer) == (False, False, True)

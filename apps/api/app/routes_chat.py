@@ -2,12 +2,13 @@ import json
 
 import anthropic
 from fastapi import APIRouter, Depends, HTTPException, Request
+from opentelemetry import trace
 from pydantic import BaseModel
 
 from .auth import User, get_current_user
 from .authz import require_conversation_owner
 from .config import CHAT_MODEL, HISTORY_WINDOW, MAX_INPUT_CHARS
-from .db import db_for_user
+from .db import as_audit_writer, db_for_user, record_event
 from .embeddings import Embedder, get_embedder
 from .gateway import Gateway, get_gateway
 from .limits import RateLimited, check_org_model_budget
@@ -15,6 +16,7 @@ from .output_handling import allowed_urls_from_chunks, sanitize_output
 from .prompting import assemble_chat_prompt
 from .redaction import redact
 from .retrieval import retrieve_chunks
+from .telemetry import traced
 from .tool_exec import run_tool_turn
 
 router = APIRouter()
@@ -113,19 +115,27 @@ def post_message(
 
     # Denial-of-wallet ceiling (Week 7): refuse before the first model call of the
     # turn if the org has spent its daily model-call budget.
+    trace.get_current_span().set_attributes(
+        {"app.org_id": org_id, "app.conversation_id": conversation_id}
+    )
     with db_for_user(user.id) as conn:
         try:
             check_org_model_budget(conn, org_id)
         except RateLimited as limit:
+            record_event(conn, cid, org_id, "model_budget", "refused", conversation_id)
             raise HTTPException(status_code=429, detail=limit.retry_hint) from None
 
-    chunks, citations, source_ids = _retrieve(user.id, org_id, payload.content, embedder)
+    with traced("retrieval.search") as span:
+        chunks, citations, source_ids = _retrieve(user.id, org_id, payload.content, embedder)
+        span.set_attribute("retrieval.chunk_count", len(chunks))
+        span.set_attribute("retrieval.document_ids", source_ids)
 
     # The assembler is the only path to the model: system text comes from the
     # versioned template registry; conversation content and retrieved context only
     # ever enter as messages, never the system slot.
     history_msgs = [{"role": r[0], "content": r[1]} for r in reversed(history)]
     prompt = assemble_chat_prompt(history_msgs, context=chunks or None)
+    trace.get_current_span().set_attribute("app.prompt_ref", prompt.template.ref)
 
     try:
         # The turn may take a single tool action; the model proposes, the app
@@ -139,7 +149,7 @@ def post_message(
         raise HTTPException(status_code=429, detail=limit.retry_hint) from None
     except anthropic.APIError:
         # Error path redacts too: no raw content reaches the audit or the response.
-        with db_for_user(user.id) as conn:
+        with db_for_user(user.id) as conn, as_audit_writer(conn):
             conn.execute(
                 "select record_model_call(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, "
                 "%s::jsonb, %s::jsonb)",
@@ -147,28 +157,34 @@ def post_message(
                  redact(payload.content), "[model error]", 0, 0, json.dumps(source_ids),
                  json.dumps(prompt.provenance), "{}"),
             )
-            conn.commit()
         raise HTTPException(status_code=502, detail="the assistant is unavailable") from None
 
     # Output side (Week 6): the reply is sanitized before it is stored or sent, so no
     # client ever holds an unsanitized assistant message. The allowlist is built only
     # from document-derived chunks (retrieval and search results), never from
     # app-generated ones that echo model-written arguments (week 8 final review).
-    safe = sanitize_output(outcome.reply_text, allowed_urls_from_chunks(outcome.allowlist_chunks))
+    with traced("output.sanitize") as span:
+        safe = sanitize_output(
+            outcome.reply_text, allowed_urls_from_chunks(outcome.allowlist_chunks)
+        )
+        span.set_attribute("output.blocked_images", len(safe.blocked_images))
+        span.set_attribute("output.defanged_links", len(safe.defanged_links))
+        span.set_attribute("output.allowed_links", len(safe.allowed_links))
 
     with db_for_user(user.id) as conn:
         conn.execute(
             "insert into messages (conversation_id, role, content) values (%s, 'assistant', %s)",
             (conversation_id, safe.text),
         )
-        conn.execute(
-            "select record_model_call(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, "
-            "%s::jsonb, %s::jsonb)",
-            (cid, org_id, conversation_id, CHAT_MODEL, prompt.template.ref,
-             redact(payload.content), redact(safe.text), outcome.input_tokens,
-             outcome.output_tokens, json.dumps(source_ids),
-             json.dumps(outcome.provenance), json.dumps(safe.actions)),
-        )
+        with as_audit_writer(conn):
+            conn.execute(
+                "select record_model_call(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, "
+                "%s::jsonb, %s::jsonb)",
+                (cid, org_id, conversation_id, CHAT_MODEL, prompt.template.ref,
+                 redact(payload.content), redact(safe.text), outcome.input_tokens,
+                 outcome.output_tokens, json.dumps(source_ids),
+                 json.dumps(outcome.provenance), json.dumps(safe.actions)),
+            )
         conn.commit()
 
     return {"reply": safe.text, "sources": citations, "tool_used": outcome.tool_used,

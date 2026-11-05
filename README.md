@@ -41,7 +41,7 @@ These are not missing features; they are scoped out so that what ships is finish
 - Long-term memory with isolation and expiry
 - Multi-step agent workflows with budgets and failure recovery
 - Provider abstraction and cross-provider evaluation
-- Incident replay / trace explorer UI
+- Trace explorer or replay UI (the audit timeline is a simple list, and traces go to a local Jaeger)
 - Sandboxed shell execution, excluded intentionally: an unhardened shell tool is the most attackable surface an AI app can ship, and it deserves its own threat model before it exists anywhere
 
 ## Run it locally
@@ -197,7 +197,30 @@ live and fails the model rows unless the committed
 [`model-latest.json`](evidence/scorecard/model-latest.json) is all PASS and matches the
 tree. See [`evidence/week9/`](evidence/week9/).
 
-Next: Week 10 (observability).
+### Week 10: observability
+
+Before explaining any AI decision from the audit trail, I attacked the trail. A signed-in
+user's own token rewrote it through the database API: an executed call relabeled `denied`,
+a model call invented, an action marked executed without running, rows written into another
+org's incident. 4/4 landed, then 0/5 after [migration 0013](supabase/migrations/0013_audit_integrity.sql)
+moved every audit writer behind a role only the API can switch to. Correlation ids are now
+server-issued, and a client's trace context is a link, never a parent.
+
+Spans cover the API, retrieval, model, tools and approval, and carry ids, counts and
+verdicts, never content. Org owners get a simple audit timeline at `/audit`. The
+[incident walkthrough](evidence/week10/incident-walkthrough.md) reconstructs the Week 8
+phishing note end to end, including what the telemetry could not answer. Its first replay
+also caught my own detection rules saying nothing about the incident they were built for,
+so I added the missing rule. See [`evidence/week10/`](evidence/week10/).
+
+```
+make traces        # local Jaeger at http://127.0.0.1:16686
+make detect        # detection rules across every org; exits 1 on a high finding
+make forge-week10  # the audit forgery attack
+make replay-week10 # replay the incident with tracing on (real model calls)
+```
+
+Next: Week 11 (buffer and hardening).
 
 ## Security
 

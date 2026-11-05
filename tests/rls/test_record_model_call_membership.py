@@ -7,7 +7,7 @@ import psycopg
 import pytest
 
 from .conftest import DB_URL, _create_user, _supabase_reachable
-from .test_pending_actions import UserConn
+from .test_pending_actions import WriterConn as UserConn
 
 pytestmark = pytest.mark.skipif(
     not _supabase_reachable(), reason="local Supabase stack not reachable"

@@ -1,0 +1,29 @@
+
+1. COVER-UP: rewrite an executed tool call to read denied
+    POST /rest/v1/rpc/finalize_tool_call -> 403
+    stored row: ('executed', 'note created')
+
+2. FABRICATE: add a model call that never happened
+    POST /rest/v1/rpc/record_model_call -> 403
+    rows stored under forged-c6c4b0a5: 0
+
+3. PHANTOM: mark an approved action executed without running it
+    POST /rest/v1/rpc/claim_pending_action -> 403
+    POST /rest/v1/rpc/complete_pending_action -> 403
+    stored status: pending; notes behind result_ref: 0
+
+4. POISON: another org writes into the victim's correlation id
+    POST /rest/v1/rpc/record_model_call -> 403
+    orgs under one correlation id: 1
+
+5. HEADER: pick the correlation id through our own API
+    sent 9ce448a4-4854-45a8-958b-a17ca22fd202, server used 81114681-1fc3-4e2c-8298-6c740cd50b8e
+
+RESULTS
+  cover-up   blocked
+  fabricate  blocked
+  phantom    blocked
+  poison     blocked
+  header     blocked
+
+0/5 forgeries landed

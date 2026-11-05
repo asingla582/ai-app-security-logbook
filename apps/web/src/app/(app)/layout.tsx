@@ -42,6 +42,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               <Link href="/chat" className="hover:text-neutral-900">
                 Chat
               </Link>
+              <Link href="/audit" className="hover:text-neutral-900">
+                Audit
+              </Link>
             </nav>
           </div>
           <div className="flex items-center gap-3 text-sm text-neutral-500">
