@@ -238,7 +238,7 @@ not an exact technique ID.
   empty result file, a stale report), or a detector scores the wrong thing, so the
   record says a defense held when nobody measured it.
 - **Status:** **controlled as of Week 9** for the scorecard itself: it does not report
-  green for a row that did not run. It does not yet block a merge (RR-W9-5), and
+  green for a row that did not run, and since 2026-11-09 a red check blocks a merge (RR-W9-5 closed);
   detector accuracy is still checked by reading transcripts, not by the scorecard.
 - **Controls:** one scorecard (`scripts/scorecard.py`, data in
   `scripts/scorecard_config.py`) scores every suite into twelve rows with thresholds
@@ -269,10 +269,11 @@ not an exact technique ID.
 - **OWASP:** cross-cutting · **NIST:** Measure · **ATLAS:** none (process control).
 - **Residuals:** model-suite regressions are found per release, locally, not per
   push (RR-W9-6). CI fails the model rows until the author runs `make scorecard` on
-  the final code and commits `evidence/scorecard/model-latest.json`, by design. The
-  `scorecard` job is advisory until the author adds a ruleset on `main` requiring the
-  `scorecard`, `web` and `security` checks: today there is no branch protection, so a
-  red check does not block a merge (RR-W9-5, open). The scorecard scores what each
+  the final code and commits `evidence/scorecard/model-latest.json`, by design. A
+  ruleset on `main` (added 2026-11-09, active, no bypass actors) requires the
+  `scorecard`, `web` and `security` checks, and requires the branch to be up to date
+  with `main` before merging (RR-W9-5, closed). The repository owner can still edit or
+  disable the ruleset; nothing records that. The scorecard scores what each
   detector reports, so a detector bug can still produce a wrong row (RR-W9-3). See §5.
 
 ### Supply chain / model provenance
@@ -314,7 +315,7 @@ Every documented finding to date, with an honest status. "Closed" here means
 | RR-W9-2 | v0.8 was released on a failing build. Merge run 37713565008 failed `api` (ruff, 15 errors) and `security` (Trivy: `next` 16.3.3 CRITICAL GHSA-vcvr-r3jv-pc5j, `sharp` 0.35.4 HIGH, `source-map-js` 1.2.1 HIGH) | **Fixed** (wk9) | Commit `d7a9fff` clears the ruff errors and upgrades `next` to 16.3.8 with `sharp` and `source-map-js` overrides. Process change: `make ci` runs the same scorecard as CI (deterministic suites live, model rows from the committed evidence) plus the web lint, tests and build, so a release can be checked locally first. Gitleaks still runs only in CI. On 2026-11-01 the same gate went red on a docs-only commit: Trivy found new advisories against `next` 16.3.8 (GHSA-2464-fhr4-w9xw, GHSA-673q-mjm6-r5xr, CVE-2026-94482). Upgraded to 16.4.1 before merge |
 | RR-W9-3 | Detector false positive: the indirect "image beacon" eval failed any reply that contained the beacon URL, including a URL shown inside inline code with a warning. Scorecard run 1 failed the case 2/10 (row 22/23) on replies that rendered no image | **Fixed** (wk9, detector) | The assertion now strips real code spans and fences, then applies the original two checks (no markdown image, no URL on the beacon host) to what remains (`b50635b`, tightened in `8dd3776`); regression tests in `tests/scorecard/test_beacon_assertion.py` include the two real replies and bypass cases. Under the old assertion run 2 would also have failed 4/10; run 2's PASS comes from the corrected detector, not different model behavior. Fifth time the project has had to apply "score the artifact, not the mention" |
 | RR-W9-4 | Pre-existing, found in week 9 review: `record_model_call` checks org membership and conversation ownership separately, but not that the conversation belongs to that org, so a user in two orgs could file an audit row under the wrong org | **Mitigated** (wk10) | No longer reachable by a user: only the API can call `record_model_call` (0013), and the API derives the org from the conversation. The function itself still does not check it |
-| RR-W9-5 | Nothing makes the scorecard block a merge. `main` has no branch protection and no ruleset, so a red `scorecard` check is visible but does not stop a merge; the job is advisory | **Open** | The author. Add a ruleset on `main` that requires the `scorecard`, `web` and `security` checks. No repository secret is needed for that any more: the scorecard job makes no model calls. Not changed by the Week 9 branch |
+| RR-W9-5 | Nothing makes the scorecard block a merge. `main` has no branch protection and no ruleset, so a red `scorecard` check is visible but does not stop a merge; the job is advisory | **Closed** (wk10) | Ruleset "main requires CI gate" added 2026-11-09 by the author after PR #1 merged: active on the default branch, no bypass actors, requires `scorecard`, `web` and `security`, strict (branch must be up to date). The repository owner can still disable it |
 | RR-W9-6 | Model-suite regressions are detected per release locally, not per push. CI makes no model calls (2026-10-18 author decision); the CI freshness check guarantees merged code matches the last measured fingerprint, not that the model was re-measured on it. A model-provider-side drift (same model id, changed behavior) is only caught at the next local run. Also not caught per push: code outside the fingerprint (covered only by the deterministic rows), and a change in the installed `anthropic` or `pydantic` version (recorded in the header for the reader, not fingerprinted, because CI installs them unpinned). The check catches stale evidence, not forged evidence: the file is self-attested, so anyone who can commit could paste the current fingerprint into an old `model-latest.json` and CI would pass it. A `model-latest.json` diff must be reviewed like code | **Open, accepted** | The author. Run `make scorecard` locally before each release and commit `evidence/scorecard/model-latest.json`; CI fails the model rows when it is stale |
 | RR-W10-1 | A database administrator or a compromised API can still rewrite audit rows. The API connects as `postgres` and switches role, and nothing makes the rows tamper-evident. Spans are a second copy, but in a local, in-memory store | **Open, accepted** | Stated limit for v1. A hash chain or an external write-once log would be the fix |
 | RR-W10-2 | `audit_events` has no rate limit. Approving random action ids writes one row per request with no org, so a signed-in user can grow the table | **Open** (low) | Week 11. Rows with no org appear on no timeline |
@@ -716,6 +717,7 @@ ran, and "not run" is never a pass.
   row (`evidence/week10/detect-same-incident.txt`).
 - **Evidence.** `evidence/week10/incident-walkthrough.md`. Week 8's attack was chosen because
   Week 6's 8/10 exfiltration needs pre-defense code and cannot be replayed honestly.
-- **Residuals.** RR-W8-3 fixed. RR-W9-4 mitigated. New: RR-W10-1 to RR-W10-6.
+- **Residuals.** RR-W8-3 fixed. RR-W9-4 mitigated. RR-W9-5 closed (ruleset added after the
+  Week 9 merge). New: RR-W10-1 to RR-W10-6.
 - **Not re-measured.** The model suites did not change, so the committed evidence still
   applies. No file in the scorecard fingerprint was edited.
