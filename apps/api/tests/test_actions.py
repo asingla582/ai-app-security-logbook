@@ -5,7 +5,6 @@ import os
 import threading
 
 import psycopg
-import pytest
 
 from app import tools as tools_mod
 from app.gateway import FakeGateway, Reply, ToolProposal, get_gateway
@@ -22,7 +21,8 @@ def _propose(client, args=None):
     try:
         client.post("/orgs", json={"name": "A"})
         conv = client.post("/conversations").json()["id"]
-        pa = client.post(f"/conversations/{conv}/messages", json={"content": "save"}).json()["pending_action"]
+        resp = client.post(f"/conversations/{conv}/messages", json={"content": "save"})
+        pa = resp.json()["pending_action"]
     finally:
         app.dependency_overrides.pop(get_gateway, None)
     org_id = client.get("/orgs").json()[0]["id"]
@@ -84,7 +84,9 @@ def test_client_supplied_args_are_rejected(alice_client):
 
 def test_other_user_cannot_approve(alice_client, bob_setup):
     pa, org_id, _ = _propose(alice_client)
-    r = bob_setup["client"].post(f"/actions/{pa['id']}/approve", json={"args_sha256": pa["args_sha256"]})
+    r = bob_setup["client"].post(
+        f"/actions/{pa['id']}/approve", json={"args_sha256": pa["args_sha256"]}
+    )
     assert r.status_code == 404
     assert "Approved" not in _titles(alice_client, org_id)
 

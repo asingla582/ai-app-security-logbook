@@ -1,0 +1,29 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________________ test_no_definer_function_is_anon_executable __________________
+
+    def test_no_definer_function_is_anon_executable():
+        with psycopg.connect(DB_URL) as conn:
+            rows = conn.execute(_DEFINER_SQL).fetchall()
+        # Guard against a vacuous pass (wrong namespace, empty catalog).
+        assert rows, (
+            "no SECURITY DEFINER functions found in schema public; the catalog query is wrong"
+        )
+        exposed = {sig for sig, anon_ok in rows if anon_ok} - ANON_ALLOWED
+>       assert not exposed, "SECURITY DEFINER functions executable by anon:\n" + "\n".join(
+            sorted(exposed)
+        )
+E       AssertionError: SECURITY DEFINER functions executable by anon:
+E         count_org_model_calls_1d(uuid)
+E         count_user_tool_calls_1m()
+E         create_organization(text)
+E         is_org_member(uuid)
+E         is_org_owner(uuid)
+E         owns_conversation(uuid)
+E         record_model_call(text,uuid,uuid,text,text,text,text,integer,integer,jsonb,jsonb,jsonb)
+E       assert not {'count_org_model_calls_1d(uuid)', 'count_user_tool_calls_1m()', 'create_organization(text)', 'is_org_member(uuid)', 'is_org_owner(uuid)', 'owns_conversation(uuid)', ...}
+
+tests/rls/test_definer_grants.py:39: AssertionError
+=========================== short test summary info ============================
+FAILED tests/rls/test_definer_grants.py::test_no_definer_function_is_anon_executable
+1 failed in 0.05s

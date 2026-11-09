@@ -22,7 +22,8 @@ def _seed_doc_chunk(org_id: str, uploader_id: str, fill: float, label: str) -> s
     # Superuser insert (bypasses RLS) to place a document + chunk in an org.
     with psycopg.connect(DB_URL) as conn:
         doc = conn.execute(
-            "insert into documents (org_id, uploaded_by, filename) values (%s, %s, %s) returning id",
+            "insert into documents (org_id, uploaded_by, filename) "
+            "values (%s, %s, %s) returning id",
             (org_id, uploader_id, label),
         ).fetchone()
         conn.execute(
@@ -37,7 +38,9 @@ def _seed_doc_chunk(org_id: str, uploader_id: str, fill: float, label: str) -> s
 @pytest.fixture(scope="module")
 def rag_seed(people):
     return {
-        "alice_doc": _seed_doc_chunk(people["alice"]["org_id"], people["alice"]["id"], 0.02, "alice"),
+        "alice_doc": _seed_doc_chunk(
+            people["alice"]["org_id"], people["alice"]["id"], 0.02, "alice"
+        ),
         "bob_doc": _seed_doc_chunk(people["bob"]["org_id"], people["bob"]["id"], 0.09, "bob"),
     }
 

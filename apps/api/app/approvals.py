@@ -26,7 +26,9 @@ def _complete(conn, action_id, executed, ref, summary):
     conn.commit()
 
 
-def approve_and_execute(conn, user, correlation_id, action_id, args_sha256, embedder) -> ApprovalOutcome:
+def approve_and_execute(
+    conn, user, correlation_id, action_id, args_sha256, embedder
+) -> ApprovalOutcome:
     if not _is_uuid(action_id):
         return ApprovalOutcome("not_found")
     row = conn.execute(

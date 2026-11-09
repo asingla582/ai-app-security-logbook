@@ -13,7 +13,9 @@ _DB_URL = os.environ.get("SUPABASE_DB_URL", "postgresql://postgres:postgres@127.
 
 
 def _turn(client, proposal, reply="It is waiting for your approval."):
-    app.dependency_overrides[get_gateway] = lambda: FakeGateway(script=[proposal, Reply(reply, 0, 0)])
+    app.dependency_overrides[get_gateway] = lambda: FakeGateway(
+        script=[proposal, Reply(reply, 0, 0)]
+    )
     try:
         client.post("/orgs", json={"name": "A"})
         conv = client.post("/conversations").json()["id"]
@@ -46,8 +48,12 @@ def test_create_note_is_parked_not_executed(alice_client):
     org_id = alice_client.get("/orgs").json()[0]["id"]
     assert "Held" not in [n["title"] for n in alice_client.get(f"/orgs/{org_id}/notes").json()]
     with psycopg.connect(_DB_URL) as conn:
-        tc = conn.execute("select status from tool_calls where conversation_id = %s", (conv,)).fetchall()
-        pend = conn.execute("select status from pending_actions where conversation_id = %s", (conv,)).fetchall()
+        tc = conn.execute(
+            "select status from tool_calls where conversation_id = %s", (conv,)
+        ).fetchall()
+        pend = conn.execute(
+            "select status from pending_actions where conversation_id = %s", (conv,)
+        ).fetchall()
     assert tc == [("pending_approval",)]
     assert pend == [("pending",)]
 
@@ -84,8 +90,11 @@ def test_park_failure_finalizes_failed_and_answers_plainly(alice_client):
     # jsonb rejects \u0000, so parking the exact args fails. The audit copy of the
     # proposal records the NUL as U+FFFD, the trajectory is closed as 'failed' (not
     # left at 'proposed'), and the turn answers plainly with nothing parked.
-    conv, r = _turn(alice_client, ToolProposal("create_note", {"title": "Nul", "body": "a\u0000b"}, 0, 0),
-                    reply="plain answer")
+    conv, r = _turn(
+        alice_client,
+        ToolProposal("create_note", {"title": "Nul", "body": "a\u0000b"}, 0, 0),
+        reply="plain answer",
+    )
     assert r.status_code == 201
     body = r.json()
     assert body["reply"] == "plain answer"
@@ -94,7 +103,9 @@ def test_park_failure_finalizes_failed_and_answers_plainly(alice_client):
     with psycopg.connect(_DB_URL) as conn:
         tc = conn.execute("select status, args->>'body' from tool_calls where conversation_id = %s",
                           (conv,)).fetchall()
-        pend = conn.execute("select 1 from pending_actions where conversation_id = %s", (conv,)).fetchall()
+        pend = conn.execute(
+            "select 1 from pending_actions where conversation_id = %s", (conv,)
+        ).fetchall()
     assert tc == [("failed", "a\ufffdb")]
     assert pend == []
 
@@ -111,8 +122,13 @@ def test_any_park_exception_finalizes_failed(alice_client, monkeypatch):
     assert r.status_code == 201
     assert r.json()["pending_action"] is None
     with psycopg.connect(_DB_URL) as conn:
-        tc = conn.execute("select status, result_summary, executed_at from tool_calls where conversation_id = %s",
-                          (conv,)).fetchall()
-        pend = conn.execute("select 1 from pending_actions where conversation_id = %s", (conv,)).fetchall()
+        tc = conn.execute(
+            "select status, result_summary, executed_at from tool_calls"
+            " where conversation_id = %s",
+            (conv,),
+        ).fetchall()
+        pend = conn.execute(
+            "select 1 from pending_actions where conversation_id = %s", (conv,)
+        ).fetchall()
     assert tc == [("failed", "could not park for approval", None)]
     assert pend == []

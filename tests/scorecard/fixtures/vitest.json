@@ -1,0 +1,6 @@
+{"testResults":[
+ {"name":"/repo/apps/web/src/app/(app)/chat/ApprovalCard.test.tsx","assertionResults":[
+   {"fullName":"ApprovalCard shows buttons","title":"shows buttons","status":"passed"},
+   {"fullName":"ApprovalCard todo","title":"todo","status":"todo"}]},
+ {"name":"/repo/apps/web/src/lib/api.test.ts","assertionResults":[
+   {"fullName":"api fails","title":"fails","status":"failed"}]}]}

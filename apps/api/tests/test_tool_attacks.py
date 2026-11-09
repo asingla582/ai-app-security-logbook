@@ -6,7 +6,6 @@ FakeGateway to force specific proposals and assert on the artifact (a note row, 
 429), never on the model's prose.
 """
 
-import pytest
 
 import app.routes_chat as routes_chat
 import app.tool_exec as tool_exec
