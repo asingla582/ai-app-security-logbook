@@ -1,0 +1,70 @@
+[
+ {
+  "traceId": "e36e0fb44674510bd4889122775bf67c",
+  "spanId": "1c3f3bba0daeb35e",
+  "flags": 256,
+  "name": "HTTP POST /actions/{action_id}/approve",
+  "kind": 1,
+  "startTimeUnixNano": "1793837873819716000",
+  "endTimeUnixNano": "1793837873877973000",
+  "attributes": [
+   {
+    "key": "app.correlation_id",
+    "value": {
+     "stringValue": "afb842fb-d849-4a5f-a64f-7d4cbfaed73c"
+    }
+   },
+   {
+    "key": "http.request.method",
+    "value": {
+     "stringValue": "POST"
+    }
+   },
+   {
+    "key": "http.response.status_code",
+    "value": {
+     "intValue": "200"
+    }
+   },
+   {
+    "key": "http.route",
+    "value": {
+     "stringValue": "/actions/{action_id}/approve"
+    }
+   }
+  ],
+  "status": {}
+ },
+ {
+  "traceId": "e36e0fb44674510bd4889122775bf67c",
+  "spanId": "4494a623cd1ef009",
+  "parentSpanId": "1c3f3bba0daeb35e",
+  "flags": 256,
+  "name": "approval.decide",
+  "kind": 1,
+  "startTimeUnixNano": "1793837873853132000",
+  "endTimeUnixNano": "1793837873872482000",
+  "attributes": [
+   {
+    "key": "app.action_id",
+    "value": {
+     "stringValue": "f685f371-b9ab-4b5a-9f2c-9087f5c07a19"
+    }
+   },
+   {
+    "key": "approval.outcome",
+    "value": {
+     "stringValue": "executed"
+    }
+   }
+  ],
+  "links": [
+   {
+    "traceId": "2c7b0919a60d1419d193fe9c047ddf05",
+    "spanId": "3326c423b07bbdba",
+    "flags": 768
+   }
+  ],
+  "status": {}
+ }
+]

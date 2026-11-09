@@ -82,6 +82,8 @@ FILE_MAP: dict[str, str] = {
     # (the spec lists "grants" under platform hygiene), not cross_tenant.
     "tests/rls/test_definer_grants.py": "platform_hygiene",
     "tests/rls/test_record_model_call_membership.py": "platform_hygiene",
+    # Week 10: who can write the audit trail is a database grant, like the two above.
+    "tests/rls/test_audit_integrity.py": "platform_hygiene",
     # ruff and Trivy outcomes arrive as synthetic junit cases from the runner.
     "scorecard/ruff": "platform_hygiene",
     "scorecard/trivy": "platform_hygiene",
@@ -103,8 +105,11 @@ FILE_MAP: dict[str, str] = {
     "apps/web/src/app/(app)/chat/AssistantMarkdown.test.tsx": "output_handling",
     "apps/web/src/app/(app)/chat/ApprovalCard.test.tsx": "output_handling",
     "apps/web/src/app/(app)/chat/ToolIndicator.test.tsx": "output_handling",
+    "apps/web/src/app/(app)/audit/AuditList.test.tsx": "output_handling",
     # Trajectory
     "apps/api/tests/test_trajectories.py": "trajectory",
+    # Week 10: the decision chain across spans, audit events and the approval link.
+    "apps/api/tests/test_observability.py": "trajectory",
     # Tool abuse and rate limits
     "apps/api/tests/test_tools.py": "tool_abuse_limits",
     "apps/api/tests/test_limits.py": "tool_abuse_limits",

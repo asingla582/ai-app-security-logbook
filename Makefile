@@ -1,4 +1,4 @@
-.PHONY: scorecard scorecard-ci ci lint trivy up down setup test attack seed eval eval-baseline eval-indirect eval-tools redteam-week6 redteam-week7 theater-week8 theater-week8-v2 redteam-week8
+.PHONY: traces detect forge-week10 replay-week10 scorecard scorecard-ci ci lint trivy up down setup test attack seed eval eval-baseline eval-indirect eval-tools redteam-week6 redteam-week7 theater-week8 theater-week8-v2 redteam-week8
 
 # Python for the scorecard targets. CI passes PYTHON=python.
 PYTHON ?= apps/api/.venv/bin/python
@@ -121,3 +121,16 @@ scorecard-ci:
 # The full CI gate: scorecard, then the web checks.
 ci: scorecard-ci
 	cd apps/web && npm run lint && npm test && npm run build
+
+# Week 10: local trace store (http://127.0.0.1:16686), detection rules, attack, replay.
+traces:
+	docker compose up -d jaeger
+
+detect:
+	set -a; . ./.env; set +a; cd apps/api && . .venv/bin/activate && python ../../scripts/detect.py
+
+forge-week10:
+	set -a; . ./.env; set +a; cd apps/api && . .venv/bin/activate && python -u ../../evidence/week10/forge_audit.py 2>&1 | tee ../../evidence/week10/forge-run-2-after.txt
+
+replay-week10: traces
+	set -a; . ./.env; set +a; export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318; cd apps/api && . .venv/bin/activate && PYTHONPATH=../../evidence/week8 python -u ../../evidence/week10/replay_incident.py 2>&1 | tee ../../evidence/week10/replay-run-next.txt

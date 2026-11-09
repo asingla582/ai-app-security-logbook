@@ -19,9 +19,10 @@ def test_response_has_correlation_id():
     assert r.headers.get("X-Correlation-Id")
 
 
-def test_incoming_correlation_id_is_echoed():
+def test_incoming_correlation_id_is_ignored():
+    # A client-chosen id could file a request under another tenant's incident.
     r = client.get("/health", headers={"X-Correlation-Id": "trace-123"})
-    assert r.headers["X-Correlation-Id"] == "trace-123"
+    assert r.headers["X-Correlation-Id"] != "trace-123"
 
 
 def test_cors_allows_the_web_origin():

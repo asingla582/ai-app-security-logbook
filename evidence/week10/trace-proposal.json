@@ -1,0 +1,247 @@
+[
+ {
+  "traceId": "2c7b0919a60d1419d193fe9c047ddf05",
+  "spanId": "480162754c3d640d",
+  "flags": 256,
+  "name": "HTTP POST /conversations/{conversation_id}/messages",
+  "kind": 1,
+  "startTimeUnixNano": "1793837862796877000",
+  "endTimeUnixNano": "1793837873811600000",
+  "attributes": [
+   {
+    "key": "app.conversation_id",
+    "value": {
+     "stringValue": "c4212c52-176e-41a7-8436-cf1ee7204b6b"
+    }
+   },
+   {
+    "key": "app.correlation_id",
+    "value": {
+     "stringValue": "aa9e88ab-8533-44e7-af69-37958cb9ebda"
+    }
+   },
+   {
+    "key": "app.org_id",
+    "value": {
+     "stringValue": "324a17da-aac8-4c8d-9aeb-f2e6635f0ce1"
+    }
+   },
+   {
+    "key": "app.prompt_ref",
+    "value": {
+     "stringValue": "chat.v6@f0478b8c"
+    }
+   },
+   {
+    "key": "app.user_id",
+    "value": {
+     "stringValue": "b5ef9163-cf4e-4e0e-9c75-088d7578b8dd"
+    }
+   },
+   {
+    "key": "http.request.method",
+    "value": {
+     "stringValue": "POST"
+    }
+   },
+   {
+    "key": "http.response.status_code",
+    "value": {
+     "intValue": "201"
+    }
+   },
+   {
+    "key": "http.route",
+    "value": {
+     "stringValue": "/conversations/{conversation_id}/messages"
+    }
+   }
+  ],
+  "status": {}
+ },
+ {
+  "traceId": "2c7b0919a60d1419d193fe9c047ddf05",
+  "spanId": "0a441efc33a4dfc2",
+  "parentSpanId": "480162754c3d640d",
+  "flags": 256,
+  "name": "retrieval.search",
+  "kind": 1,
+  "startTimeUnixNano": "1793837862816637000",
+  "endTimeUnixNano": "1793837862825832000",
+  "attributes": [
+   {
+    "key": "retrieval.chunk_count",
+    "value": {
+     "intValue": "1"
+    }
+   },
+   {
+    "key": "retrieval.document_ids",
+    "value": {
+     "arrayValue": {
+      "values": [
+       {
+        "stringValue": "3c426362-1695-48c8-8419-e1f33b03c6c4"
+       }
+      ]
+     }
+    }
+   }
+  ],
+  "status": {}
+ },
+ {
+  "traceId": "2c7b0919a60d1419d193fe9c047ddf05",
+  "spanId": "374c940ccb7b7ee2",
+  "parentSpanId": "480162754c3d640d",
+  "flags": 256,
+  "name": "model.propose",
+  "kind": 1,
+  "startTimeUnixNano": "1793837862826735000",
+  "endTimeUnixNano": "1793837868975680000",
+  "attributes": [
+   {
+    "key": "app.model.outcome",
+    "value": {
+     "stringValue": "tool_use"
+    }
+   },
+   {
+    "key": "gen_ai.request.model",
+    "value": {
+     "stringValue": "claude-opus-4-8"
+    }
+   },
+   {
+    "key": "gen_ai.tool.name",
+    "value": {
+     "stringValue": "create_note"
+    }
+   },
+   {
+    "key": "gen_ai.usage.input_tokens",
+    "value": {
+     "intValue": "2101"
+    }
+   },
+   {
+    "key": "gen_ai.usage.output_tokens",
+    "value": {
+     "intValue": "530"
+    }
+   }
+  ],
+  "status": {}
+ },
+ {
+  "traceId": "2c7b0919a60d1419d193fe9c047ddf05",
+  "spanId": "3326c423b07bbdba",
+  "parentSpanId": "480162754c3d640d",
+  "flags": 256,
+  "name": "tool.decide",
+  "kind": 1,
+  "startTimeUnixNano": "1793837868975790000",
+  "endTimeUnixNano": "1793837869007289000",
+  "attributes": [
+   {
+    "key": "app.action_id",
+    "value": {
+     "stringValue": "f685f371-b9ab-4b5a-9f2c-9087f5c07a19"
+    }
+   },
+   {
+    "key": "app.args_sha256",
+    "value": {
+     "stringValue": "d79702b923a255d57fff9fa467c26c3e211bd65e71e58b67fbdab724262a36f2"
+    }
+   },
+   {
+    "key": "gen_ai.tool.name",
+    "value": {
+     "stringValue": "create_note"
+    }
+   },
+   {
+    "key": "tool.decision",
+    "value": {
+     "stringValue": "proposed"
+    }
+   },
+   {
+    "key": "tool.final_status",
+    "value": {
+     "stringValue": "pending_approval"
+    }
+   }
+  ],
+  "status": {}
+ },
+ {
+  "traceId": "2c7b0919a60d1419d193fe9c047ddf05",
+  "spanId": "2cfef75cbb3ed8b3",
+  "parentSpanId": "480162754c3d640d",
+  "flags": 256,
+  "name": "model.complete",
+  "kind": 1,
+  "startTimeUnixNano": "1793837869007461000",
+  "endTimeUnixNano": "1793837873775970000",
+  "attributes": [
+   {
+    "key": "app.model.outcome",
+    "value": {
+     "stringValue": "reply"
+    }
+   },
+   {
+    "key": "gen_ai.request.model",
+    "value": {
+     "stringValue": "claude-opus-4-8"
+    }
+   },
+   {
+    "key": "gen_ai.usage.input_tokens",
+    "value": {
+     "intValue": "1615"
+    }
+   },
+   {
+    "key": "gen_ai.usage.output_tokens",
+    "value": {
+     "intValue": "358"
+    }
+   }
+  ],
+  "status": {}
+ },
+ {
+  "traceId": "2c7b0919a60d1419d193fe9c047ddf05",
+  "spanId": "64a493a7c94d47e9",
+  "parentSpanId": "480162754c3d640d",
+  "flags": 256,
+  "name": "output.sanitize",
+  "kind": 1,
+  "startTimeUnixNano": "1793837873776393000",
+  "endTimeUnixNano": "1793837873776556000",
+  "attributes": [
+   {
+    "key": "output.allowed_links",
+    "value": {
+     "intValue": "0"
+    }
+   },
+   {
+    "key": "output.blocked_images",
+    "value": {
+     "intValue": "0"
+    }
+   },
+   {
+    "key": "output.defanged_links",
+    "value": {
+     "intValue": "0"
+    }
+   }
+  ],
+  "status": {}
+ }
+]

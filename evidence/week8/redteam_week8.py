@@ -113,11 +113,16 @@ def forgery():
     check("F1 direct INSERT of an approved row", err == "InsufficientPrivilege", err)
     r = other.post(f"/actions/{pa['id']}/approve", json={"args_sha256": pa["args_sha256"]})
     check("F2 another user approves my action", r.status_code == 404 and notes(org_id) == 0, f"HTTP {r.status_code}")
+    # Since Week 10 this is refused outright: the function is out of a user's reach.
     with as_user(uid) as c:
-        c.execute("select complete_pending_action(%s, true, null, 'forged')", (pa["id"],))
-        c.commit()
-        status = c.execute("select status from pending_actions where id = %s", (pa["id"],)).fetchone()[0]
-    check("F3 mark a pending row executed via complete()", status == "pending", f"status={status}")
+        err = db_error(lambda: c.execute(
+            "select complete_pending_action(%s, true, null, 'forged')", (pa["id"],)))
+        c.rollback()
+    with psycopg.connect(DB_URL) as conn:
+        status = conn.execute("select status from pending_actions where id = %s",
+                              (pa["id"],)).fetchone()[0]
+    check("F3 mark a pending row executed via complete()",
+          err == "InsufficientPrivilege" and status == "pending", f"{err}, status={status}")
 
 
 def replay():
@@ -134,6 +139,7 @@ def replay():
         barrier, out = threading.Barrier(2), []
 
         def claim(c):
+            c.execute("set role audit_writer")  # the API's write path since Week 10
             barrier.wait()
             out.append(c.execute("select outcome from claim_pending_action(%s, %s)",
                                  (pa2["id"], pa2["args_sha256"])).fetchone()[0])

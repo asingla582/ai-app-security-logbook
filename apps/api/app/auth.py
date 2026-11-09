@@ -1,6 +1,7 @@
 import jwt
 from fastapi import HTTPException, Request
 from jwt import PyJWKClient
+from opentelemetry import trace
 from pydantic import BaseModel
 
 from .config import SUPABASE_URL
@@ -29,4 +30,6 @@ def get_current_user(request: Request) -> User:
         )
     except (jwt.PyJWTError, jwt.PyJWKClientError):
         raise HTTPException(status_code=401, detail="invalid token") from None
+    # On the request's root span, so every trace names who made it.
+    trace.get_current_span().set_attribute("app.user_id", claims["sub"])
     return User(id=claims["sub"], email=claims.get("email", ""))

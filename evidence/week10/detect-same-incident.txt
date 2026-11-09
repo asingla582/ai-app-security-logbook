@@ -1,0 +1,1 @@
+{"org_id": "324a17da-aac8-4c8d-9aeb-f2e6635f0ce1", "rule": "approved_document_link", "severity": "high", "ts": "2026-11-05T00:17:53.852557+00:00", "correlation_id": "aa9e88ab-8533-44e7-af69-37958cb9ebda", "user_id": "b5ef9163-cf4e-4e0e-9c75-088d7578b8dd", "subject_id": "f685f371-b9ab-4b5a-9f2c-9087f5c07a19", "detail": {"tool": "create_note", "hosts": ["sso-acme-verify.example"]}}
